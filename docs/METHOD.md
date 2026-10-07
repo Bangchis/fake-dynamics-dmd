@@ -103,3 +103,20 @@ G events report CD/direct gradient ratios in **output y space**, not parameter
 gradient cosine/alignment. Logical forward counters include probes and exclude
 extra recomputations from activation checkpointing; elapsed/allocated GPU hours
 are wall-time estimates, not a profiler or measured utilization.
+
+## H100 memory/diagnostic adapter
+
+The original full-FP32 state defaults remain available. The explicit H100 config
+uses frozen BF16 T, full FP32 G/F with BF16 autocast, a FP32 CPU EMA master and a
+temporary BF16 CUDA functional copy. Master arithmetic/checkpoint/export stays
+FP32. This reduces residency but does not assert identical targets to full FP32
+forwards. Snapshot lifetime ends before backward and after probes/samples; EMA
+updates invalidate it. Rank-local AdamW state sharing changes placement rather
+than the loss/update rule; Torch/topology/partition must match on exact resume.
+
+The debug_anchor_cycle flag covers 999/749/499/249 in order only for short smoke
+with explicit nonzero overrides. Scientific runs retain uniform synchronized
+random anchors. No smoke checkpoint may be resumed into a quality run that
+changes this flag or the override values. TensorBoard/probe/sample paths detach
+and sample events preserve training RNG. Read H100_RUN_PLAN.md for aggregation,
+retention, bounded budgets and external metric provenance.

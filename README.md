@@ -17,6 +17,12 @@ bước kiểm tra bên dưới trên máy phù hợp trước run dài.
 Đặc tả gốc là tài liệu nguồn; những chỉ dẫn chạy GPU trong tài liệu không có nghĩa
 là tác giả đã thực hiện các run đó.
 
+**Bên nhận có 2 × H100 80GB:** dùng [config + kế hoạch chạy đã chốt](docs/H100_RUN_PLAN.md)
+và [nguồn paper / lý do chọn thông số](docs/CONFIG_SOURCES.md). Có launcher
+smoke/resume → sweep CD 3 × 300 G tùy chọn → pilot 1500 G → main 5000 tổng G,
+TensorBoard, log từng rank và retention một latest checkpoint mỗi run. Metric
+libraries/caches có sẵn được tái dùng qua adapter; xem EVALUATION.md.
+
 ## Những phần đã triển khai
 
 - Prompt-only SDXL conditioning đủ hai text encoders, pooled embeddings và time IDs.
@@ -27,11 +33,14 @@ là tác giả đã thực hiện các run đó.
 - 5 successful F updates → 1 successful G update; counter/ramp mới bắt đầu từ 0.
 - Native AMP skip handling, log JSONL, fixed probes, checkpoint atomic và resume
   model/optimizer/scaler/RNG/prompt order/cycle progress.
+- TensorBoard loss/gradient ratio/drift/VRAM/timing/fixed G+EMA images; import điểm
+  đánh giá thật. Opt-in optimizer stage-1 sharing và CPU FP32 EMA cho 2 H100.
 - Sampler G stochastic re-noising 4 anchors; PNG, mapping và evaluation manifest.
 - FID/CLIP bridge tới evaluator DMD2 ghim commit. ImageReward/HPS nhận qua metric
   plugins có provenance; chưa xác minh hoặc tự động cài ba evaluator này.
 
-Single CUDA hoặc DDP được viết. Mỗi rank giữ cả G/F/T/EMA; **chưa đo VRAM/throughput**.
+Single CUDA hoặc DDP được viết. H100 config chia AdamW state, giữ EMA master ở CPU
+và teacher BF16; G/F vẫn full-weight trên mỗi rank. **Chưa đo VRAM/throughput**.
 Không có FSDP, LoRA hay gradient accumulation. Chọn flag chưa hỗ trợ sẽ báo lỗi.
 VAE chỉ load khi decode ảnh, không nằm trong latent training loop. Không có LMDB,
 real-image train data, discriminator hay GAN objective.
@@ -44,7 +53,7 @@ Python 3.11; CUDA/PyTorch tương thích GPU thực tế. Ví dụ cài CUDA 12.
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-python -m pip install -e '.[sdxl,dev]'
+python -m pip install -e '.[sdxl,dev,logging]'
 fdmd plan --config configs/sdxl.yaml
 fdmd doctor --config configs/sdxl.yaml
 ```

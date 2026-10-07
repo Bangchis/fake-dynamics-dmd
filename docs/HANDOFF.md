@@ -11,6 +11,11 @@ GPU runs and benchmark are future recipient work, not completed actions.
 
 ## Start here
 
+The recipient now has HF access and 2 H100 80GB GPUs. Use H100_RUN_PLAN.md and
+CONFIG_SOURCES.md for the chosen hardware mode, bounded CD screen, TensorBoard,
+retention and reuse of existing metric installations. These additions are code
+delivery only: the Mac no-test constraint remains in force.
+
 1. Read METHOD.md and DECISIONS.md. Keep the distinction between fixed v0 choices,
    proposed hyperparameters, adapter choices and unverified benchmark details.
 2. Follow RUNBOOK.md on your machine. Record Python/CUDA/driver/dependency versions,
@@ -30,17 +35,19 @@ so a maintainer can isolate sampler, signs, coefficient broadcasts and detach
 boundaries. Training consumes prompt JSONL directly and never builds the original
 LMDB real-image loaders. No discriminator is loaded into either optimizer.
 
-Native DDP and AMP handling are implemented but unexecuted. Checkpoint schema 1
+Native DDP and AMP handling are implemented but unexecuted. Checkpoint schema 2
 stores G/F/EMA, AdamW, AMP scalers, counters, warmup/cycle progress, per-rank RNG and
 prompt-stream states, fixed-probe history, scheduler coefficients/config and
-initialization provenance. Teacher/text encoders are reloaded from the pinned
-backbone revision. No automatic checkpoint deletion or best-model replacement.
+initialization provenance. Optimizer/RNG/data state is written separately by each
+rank; shared G/F/EMA weights are written once. V1 model reading remains supported.
+Teacher/text encoders reload from the pinned backbone. Bounded retention is opt-in;
+the H100 config keeps one latest and protects `.pin`, failure/warmup and exports.
 
-Full SDXL is intentionally full-weight training. This implementation does not solve
-the substantial memory requirements with speculative FSDP/LoRA/CPU offload. DDP
-replicates the model/optimizer state; it does not make each replica smaller. Need
-for sharding/accumulation is an engineering extension to design and verify on the
-actual hardware, not a flag to silently switch on.
+Full SDXL is intentionally full-weight training. The H100 mode implements native
+optimizer stage-1 sharing and a FP32 CPU EMA master with a staged BF16 CUDA target
+copy. Plain DDP still replicates all model/optimizer state; the explicit zero1 mode
+partitions AdamW state only. No FSDP/LoRA/accumulation is implemented. H100 memory
+fit, functional EMA forwards and local optimizer resume still require execution.
 
 ## First integration uncertainties to resolve
 

@@ -9,7 +9,7 @@ and actual checkpoint before changing the method.
 |---|---|
 | strict import mismatch | Full paired release, raw generator state, exact `fake_unet.` prefix, UNet config and tensor shapes. Do not use `strict=False`. |
 | no CUDA / wrong precision | Torch wheel, CUDA driver/device visibility, bf16 support, matching torchvision; doctor allocates no model. |
-| out of memory | All four UNets plus G/F optimizer and gradients are replicated. Reduce measured batch, try validated activation checkpointing. FSDP/accumulation need a separate implementation. |
+| out of memory | Check actual sharding/EMA/teacher settings, peak by rank, failed operation and batch. H100 mode shards optimizer state and stages CPU EMA; G/F and DDP buckets still occupy VRAM. FSDP/accumulation need a separate implementation. |
 | fake loss suddenly lower when beta rises | Target normalization divides by 1+beta. Inspect corrected errors and held-out probes, not only raw/mixed loss. |
 | G has no gradient | Proxy y must retain graph; critic estimates and proxy target must detach. Detached teacher/fake MSE cannot update G. |
 | teacher/EMA changes unexpectedly | Frozen `requires_grad`, eval mode, correct optimizer parameter identities; EMA after successful G only. |
@@ -19,6 +19,9 @@ and actual checkpoint before changing the method.
 | repeated skipped steps | JSONL has network, loss, norm, AMP scale and failure streak. The run aborts after the configured threshold; debug the first nonfinite value. |
 | resume rejected | Scientific config, prompt hash, batch/world size and coefficients must match. Only budget/output/log intervals can change. |
 | checkpoint checksum failure | Use a complete atomic directory; ignore `.incomplete_*`. Do not remove validation to load a partial write. |
+| rank-local optimizer resume rejected | Both rank files, exact Torch build/world size and identical named-parameter partitions are required. A single common training.pt does not restore optimizers. |
+| no TensorBoard scalars | Install logging extra in the training env; only rank 0 writes events. F uses k_F, G/probes use k_G. Null sparse buckets are intentionally omitted. |
+| CPU EMA or functional_call failure | Verify Torch 2.6, device/dtype of the temporary state and FP32 CPU master. Snapshot is released before backward and invalidated after G/restore. Compare targets against the full FP32 reference on real SDXL. |
 | evaluator import/model download failure | Clean pinned DMD2 checkout, eval dependencies, model cache/network, OpenAI CLIP installation if CLIP requested. |
 
 No clipping/thresholding of latents or `nan_to_num` is added to hide instability.
@@ -45,7 +48,9 @@ and held-out corrected errors on fresh generated four-step endpoints. Per-rank
 probe history resumes with checkpoints. Each bucket can have few/no observations;
 increase sampling before making comparisons. Probes add real F/G/T/EMA forwards.
 
-Wall time includes training-loop work/checkpointing after initialization; allocated
+Wall time includes prior training-loop work/periodic checkpoints after initialization;
+the final checkpoint has its own logged write_seconds and is outside the saved
+elapsed-training counter. Allocated
 GPU hours are world-size × wall-hours on CUDA. Forward counts are logical calls
 and exclude activation recomputation. Measure real utilization/throughput/memory
 with your profiler; no measurement is supplied in this repo.

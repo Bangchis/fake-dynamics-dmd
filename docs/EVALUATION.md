@@ -5,7 +5,12 @@ COCO2014 validation 10K protocol. There is no result in this repository. The
 supplied Decoupled DMD row and DMD2 zoo values are references, not measured rows.
 Read original_handoff_vi.md §§13–15 for metric table, source links and caveats.
 
-## Initialize the metric pipeline on the recipient's machine
+## Reuse the recipient metric environment first
+
+The 2-H100 recipient already has metric libraries/caches. Reuse verified versions
+and read shared weight caches; record model/library hashes, aggregation and scale.
+Skip new installation if the pinned evaluator and its dependencies already work.
+Only for missing components, inspect this setup script before running it:
 
 ```bash
 bash scripts/prepare_evaluator.sh
@@ -104,3 +109,22 @@ Warm start has GAN history; this is continued training without adversarial loss.
 Keep initialization and additional compute visible. Do not claim equal-budget
 superiority, variance reduction or novelty from a single FID result. Full matched
 baseline retraining is not a prerequisite to evaluating the new checkpoint.
+
+## Training dashboard and storage
+
+After a completed evaluation, import its actual values/provenance into the run's
+TensorBoard (use k_G=0 for initialization):
+
+```bash
+fdmd log-evaluation --report reports/pilot/evaluation_manifest.json \
+  --run-dir runs/h100/cd-default --generator-updates 1500
+```
+
+Recipient-owned evaluators can emit the same metrics-record schema instead of
+reinstalling libraries. ImageReward/HPS require the version/revision/aggregation
+fields above. Missing metrics stay null. Keep one declared online-G/EMA selection
+for final10K, preserve selected weights before rolling checkpoints are pruned and
+record the forward precision. Training's staged BF16 EMA snapshots and final
+FP32-master-plus-autocast sampling can differ numerically; inspect this during
+protocol calibration. Remove generated image sets after all requested metrics
+and sample/protocol evidence have been saved if storage is constrained.

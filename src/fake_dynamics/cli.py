@@ -45,6 +45,10 @@ def build_parser():
     evaluation.add_argument("--clip", action="store_true")
     evaluation.add_argument("--metric-plugin", action="append", default=[])
     evaluation.add_argument("--expected-count", type=int, default=10000)
+    log_eval = commands.add_parser("log-evaluation")
+    log_eval.add_argument("--report", required=True)
+    log_eval.add_argument("--run-dir", required=True)
+    log_eval.add_argument("--generator-updates", type=int, required=True)
     return parser
 
 
@@ -128,6 +132,11 @@ def dispatch(args):
             "metrics": result["metrics"],
             "paper_protocol_equivalence": result["paper_protocol_equivalence"],
         }
+    if args.command == "log-evaluation":
+        from .telemetry import log_evaluation
+
+        log_evaluation(args.report, args.run_dir, args.generator_updates)
+        return {"tensorboard": str(args.run_dir) + "/tensorboard", "report": args.report}
     raise ValueError("Unknown command")
 
 

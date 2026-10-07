@@ -5,6 +5,9 @@ Mac. Use the repository root as your working directory. See README for dependenc
 installation; choose a Torch CUDA wheel matching your driver/GPU. Do not install
 upstream DMD2's whole older training environment into this package environment.
 
+For the owner's 2 × H100 80GB recipient, follow H100_RUN_PLAN.md first. The generic
+single/DDP examples below remain available; configs/sdxl.yaml leaves budget unset.
+
 ## 1. Record and inspect before allocation
 
 ```bash
@@ -16,7 +19,8 @@ nvidia-smi > nvidia-smi.txt
 
 Keep these environment records with your experiment, not in the source commit.
 Check host RAM and disk as well as VRAM. Full G/F, optimizer state and FP32 EMA are
-large; DDP replicates them. Checkpoint writing/verification and evaluation consume
+large; plain DDP replicates them. H100 config explicitly shares optimizer state and
+offloads EMA. Checkpoint writing/verification and evaluation consume
 substantial I/O. No memory or hardware capacity has been measured by the author.
 
 ## 2. Fetch verified-source assets explicitly

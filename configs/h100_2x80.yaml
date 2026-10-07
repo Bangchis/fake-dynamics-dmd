@@ -1,0 +1,55 @@
+# Paper-derived optimizer/sampler; handoff hypotheses are labeled in CONFIG_SOURCES.md.
+# Runtime asset paths come from scripts/run_h100.sh environment variables.
+backend: sdxl
+backbone: stabilityai/stable-diffusion-xl-base-1.0
+backbone_revision: 462165984030d82259a11f4367a4eed129e94a7b
+fake_initialization: paired
+generator_checkpoint: null
+guidance_checkpoint: null
+prompts_path: null
+output_dir: runs/h100/cd-default
+resolution: 1024
+prediction_type: epsilon
+generator_anchors: [999, 749, 499, 249]
+teacher_cfg: 8.0
+generator_lr: 5.0e-7
+fake_lr: 5.0e-7
+adam_betas: [0.9, 0.999]
+weight_decay: 0.01
+max_grad_norm: 10.0
+fake_updates_per_generator: 5
+fake_warmup_updates: 0
+fake_timestep_range_inclusive: [0, 999]
+dm_timestep_range_inclusive: [20, 980]
+teacher_anchor_beta_max: 0.05 # user-method hypothesis; no claimed paper-tuned value
+teacher_anchor_start_g_update: 100
+teacher_anchor_ramp_g_updates: 1000
+consistency_weight_max: 0.1 # candidate default; sweep 0.03, 0.1, 0.3
+consistency_ramp_g_updates: 100
+generator_ema_decay: 0.99 # target-network hypothesis, NOT CM's evaluation EMA
+beta_override: null
+consistency_override: null
+per_device_batch_size: 1 # global 2; hardware adaptation, not DMD2's global 128
+total_generator_updates: 1500 # successful G updates; 7500 F, beyond full beta at 1100
+checkpoint_interval_g_updates: 500
+checkpoint_keep_last: 1 # only own completed periodic/final checkpoints; .pin protected
+probe_interval_g_updates: 25
+tensorboard: true
+tensorboard_flush_seconds: 30
+sample_interval_g_updates: 250
+fixed_sample_count: 8
+performance_interval_g_updates: 10
+distributed_strategy: ddp
+optimizer_state_sharding: zero1
+mixed_precision: bf16
+gradient_checkpointing: true
+gradient_accumulation_steps: 1
+teacher_weight_dtype: bfloat16
+ema_device: cpu
+ema_forward_dtype: bfloat16 # temporary CUDA snapshot; CPU master/update remains FP32
+conversion_dtype: float64
+seed: 10
+probe_seed: 12345
+max_consecutive_failed_updates: 3
+debug_anchor_cycle: false
+hardware_and_compute_budget: '2 H100 80GB; smoke -> optional 3x300 screening -> 1500 pilot -> 5000 total if justified; fit/throughput unmeasured'

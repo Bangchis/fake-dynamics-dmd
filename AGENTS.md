@@ -20,5 +20,8 @@ Do not use training subsets of COCO evaluation prompts/images for benchmark tuni
 When the machine and user constraints allow, run the checks listed in
 docs/VERIFICATION.md. Otherwise report precisely what was only statically reviewed.
 Do not claim benchmarks, runtime, memory suitability or successful resume without
-actual evidence. Retain checkpoints and initialization provenance; never commit
+actual evidence. The owner's later request permits bounded checkpoint retention:
+prune only this run's own completed schema-2 periodic/final checkpoints. Protect
+`.pin`, source assets, failures/warmups and selected/best exports. Keep logs,
+configs and initialization provenance; never commit
 tokens, downloaded weights, datasets, generated images or training logs.

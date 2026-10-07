@@ -1,3 +1,5 @@
+import json
+import sys
 import time
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from .backend import make_backend
 from .checkpoint import resume, save_checkpoint
 from .data import PromptStream
 from .diffusion import ca_time, uniform_time
+from .ema import ema_master, release_ema
 from .objectives import (
     consistency_loss,
     corrected_fake,
@@ -15,20 +18,33 @@ from .objectives import (
     guided,
     mixed_target,
 )
-from .runtime import JsonLogger, Runtime, environment_manifest, unwrap, write_json
+from .runtime import (
+    JsonLogger,
+    Runtime,
+    environment_manifest,
+    restore_rng,
+    rng_state,
+    unwrap,
+    write_json,
+)
 from .sampling import PAIRS, backsimulate, fake_transition, generator_x0, sample_generator
+from .telemetry import TensorBoardLogger, event_time
 
 
 @torch.no_grad()
 def update_ema(ema, generator, decay):
+    release_ema(ema)
+    ema = ema_master(ema)
     source = dict(unwrap(generator).named_parameters())
     for name, parameter in ema.named_parameters():
         if parameter.dtype != torch.float32:
             raise ValueError("EMA state must remain FP32")
-        parameter.mul_(decay).add_(source[name].detach().float(), alpha=1 - decay)
+        parameter.mul_(decay).add_(
+            source[name].detach().to(device=parameter.device, dtype=torch.float32), alpha=1 - decay
+        )
     source_buffers = dict(unwrap(generator).named_buffers())
     for name, buffer in ema.named_buffers():
-        buffer.copy_(source_buffers[name])
+        buffer.copy_(source_buffers[name].to(buffer.device))
 
 
 class Trainer:
@@ -41,6 +57,7 @@ class Trainer:
         if not resume_path and (output / "run_manifest.json").exists():
             raise ValueError("Run already exists. Resume it or choose a new output_dir.")
         self.logger = JsonLogger(output / f"metrics_rank{self.runtime.rank}.jsonl")
+        self.tensorboard = TensorBoardLogger(config, self.runtime.rank)
         self.backend = make_backend(config, self.runtime.device, import_weights=resume_path is None)
         self.backend.generator.train()
         self.backend.fake.train()
@@ -51,6 +68,16 @@ class Trainer:
             self.runtime.world_size,
             config.seed,
         )
+        self.tensorboard.text(
+            "run/fixed_prompts",
+            json.dumps(
+                [
+                    {"id": row["id"], "prompt": row["prompt"], "seed": config.probe_seed + i}
+                    for i, row in enumerate(self.data.records[: config.fixed_sample_count])
+                ],
+                ensure_ascii=False,
+            ),
+        )
         self.shape = (
             config.per_device_batch_size,
             4,
@@ -60,10 +87,16 @@ class Trainer:
         self.optimizers = {}
         for name, lr in (("generator", config.generator_lr), ("fake", config.fake_lr)):
             model = getattr(self.backend, name)
-            self.optimizers[name] = torch.optim.AdamW(
-                model.parameters(), lr=lr, betas=config.adam_betas, weight_decay=config.weight_decay
-            )
+            self.optimizers[name] = self.runtime.make_optimizer(model, lr)
             setattr(self.backend, name, self.runtime.wrap(model))
+        if self.runtime.world_size > 1:
+            if not resume_path:
+                ema_master(self.backend.ema).load_state_dict(
+                    unwrap(self.backend.generator).state_dict(), strict=True
+                )
+            if config.backend == "toy":
+                for value in self.backend.teacher.state_dict().values():
+                    torch.distributed.broadcast(value, src=0)
         self.scalers = {
             name: torch.amp.GradScaler("cuda", enabled=config.mixed_precision == "fp16")
             for name in self.optimizers
@@ -84,6 +117,10 @@ class Trainer:
         self.assert_ownership()
         if resume_path:
             resume(self, resume_path)
+            if config.total_generator_updates <= self.state["generator_updates"]:
+                raise ValueError(
+                    "Resume needs a total G budget larger than restored k_G; choose the next stage"
+                )
         if self.runtime.rank == 0:
             write_json(
                 output / ("resume_manifest.json" if resume_path else "run_manifest.json"),
@@ -104,10 +141,11 @@ class Trainer:
             )
         self.runtime.barrier()
 
-    def log(self, event, beta=None, lambda_cd=None, **values):
+    def log(self, event, beta=None, lambda_cd=None, aggregate=False, **values):
         schedule_beta, schedule_cd = self.config.weights(self.state["generator_updates"])
-        self.logger.log(
+        record = dict(
             event=event,
+            unix_time=event_time(),
             rank=self.runtime.rank,
             k_G=self.state["generator_updates"],
             k_F=self.state["fake_updates"],
@@ -115,6 +153,9 @@ class Trainer:
             lambda_cd=schedule_cd if lambda_cd is None else lambda_cd,
             **values,
         )
+        self.logger.log(**record)
+        dashboard_record = self.runtime.aggregate_metrics(record) if aggregate else record
+        self.tensorboard.record(event, dashboard_record)
 
     def assert_ownership(self):
         identities = {}
@@ -148,6 +189,9 @@ class Trainer:
             c,
             self.shape,
             self.runtime.device,
+            anchor_index=(
+                self.state["generator_updates"] % 4 if self.config.debug_anchor_cycle else None
+            ),
         )
         self.state["forward_counts"]["generator"] += (999 - tau) // 250
         return c, tau, h
@@ -177,9 +221,11 @@ class Trainer:
             self.state[f"{name}_updates"] += 1
             self.state[f"failed_{name}"] = 0
             if name == "generator":
+                ema_started = time.monotonic()
                 update_ema(
                     self.backend.ema, self.backend.generator, self.config.generator_ema_decay
                 )
+                self.state["last_ema_update_seconds"] = time.monotonic() - ema_started
         else:
             self.state[f"failed_{name}"] += 1
             self.log(
@@ -199,6 +245,7 @@ class Trainer:
         return succeeded, norm
 
     def fake_step(self, beta):
+        started = time.monotonic()
         self.optimizers["fake"].zero_grad(set_to_none=True)
         d = self.backend.diffusion
         with self.runtime.autocast():
@@ -237,10 +284,17 @@ class Trainer:
                 )
                 metrics[f"samples_{low}_{high}"] = int(mask.sum())
         # This minibatch statistic is not a held-out oracle estimate of critic lag.
-        self.log("fake_step", beta=beta, **metrics)
+        metrics.update(
+            step_seconds=time.monotonic() - started,
+            optimizer_attempt=self.state["fake_attempts"],
+            learning_rate=self.optimizers["fake"].param_groups[0]["lr"],
+            gradient_clipped=norm > self.config.max_grad_norm,
+        )
+        self.log("fake_step", beta=beta, aggregate=True, **metrics)
         return success
 
     def generator_step(self, beta, cd_weight):
+        started = time.monotonic()
         self.optimizers["generator"].zero_grad(set_to_none=True)
         d = self.backend.diffusion
         with self.runtime.autocast():
@@ -279,6 +333,7 @@ class Trainer:
             loss_direct = direct_proxy(y, gradient)
             loss_cd = consistency_loss(y, target_cd)
             loss = loss_direct + cd_weight * loss_cd
+        release_ema(self.backend.ema)
         success, norm = self.optimizer_step("generator", loss)
         direct_output_norm = float(gradient.norm()) / y.numel()
         cd_output_gradient = (
@@ -288,6 +343,7 @@ class Trainer:
         )
         self.log(
             "generator_step",
+            aggregate=True,
             beta=beta,
             lambda_cd=cd_weight,
             schedule_for_next_update=self.config.weights(self.state["generator_updates"]),
@@ -297,6 +353,11 @@ class Trainer:
             loss_direct=float(loss_direct.detach()),
             loss_cd=float(loss_cd.detach()),
             grad_norm=norm,
+            gradient_clipped=norm > self.config.max_grad_norm,
+            step_seconds=time.monotonic() - started,
+            ema_update_seconds=self.state.get("last_ema_update_seconds", 0.0) if success else 0.0,
+            optimizer_attempt=self.state["generator_attempts"],
+            learning_rate=self.optimizers["generator"].param_groups[0]["lr"],
             dm_output_norm=float(g_dm.norm()),
             ca_output_norm=float(g_ca.norm()),
             direct_y_gradient_norm=direct_output_norm,
@@ -354,6 +415,7 @@ class Trainer:
             beta, cd_weight = self.config.weights(self.state["generator_updates"])
             tc, tu = self.teacher_pair(probe_x, probe_t, c)
             qhat = corrected_fake(probe_fake, guided(tc, tu, self.config.teacher_cfg), beta)
+        release_ema(self.backend.ema)
         self.state["forward_counts"]["generator"] += 6
         self.state["forward_counts"]["fake"] += 4
         self.state["forward_counts"]["ema"] += 1
@@ -381,7 +443,90 @@ class Trainer:
                 None if previous is None else float((tensor.cpu() - previous).square().mean())
             )
             self.probe_state[key] = tensor.detach().float().cpu()
-        self.log("fixed_probe", **metrics)
+        self.log("fixed_probe", aggregate=True, **metrics)
+
+    @torch.no_grad()
+    def fixed_samples(self):
+        if self.config.backend != "sdxl":
+            self.log("fixed_samples_skipped", reason="Toy backend has no image decoder")
+            return
+        self.runtime.barrier()
+        status = None
+        if self.runtime.rank == 0:
+            training_rng = rng_state()
+            generator_mode = self.backend.generator.training
+            try:
+                unwrap(self.backend.generator).eval()
+                device, d = self.runtime.device, self.backend.diffusion
+                sample_records = self.data.records[: self.config.fixed_sample_count]
+                with self.runtime.autocast():
+                    for name in ("generator", "ema"):
+                        model = unwrap(getattr(self.backend, name))
+                        for index, record in enumerate(sample_records):
+                            c = self.backend.encode([record["prompt"]])
+                            rng = torch.Generator(device=device).manual_seed(
+                                self.config.probe_seed + index
+                            )
+                            latent = sample_generator(
+                                model,
+                                d,
+                                c,
+                                (1, 4, self.config.resolution // 8, self.config.resolution // 8),
+                                device,
+                                rng,
+                            )
+                            image = self.backend.decode(latent)[0].permute(2, 0, 1)
+                            self.tensorboard.image(
+                                f"fixed_samples/{name}/{index}",
+                                image,
+                                self.state["generator_updates"],
+                            )
+                            self.state["forward_counts"][name] += 4
+                self.log(
+                    "fixed_samples",
+                    count=len(sample_records),
+                    seed_base=self.config.probe_seed,
+                    storage="TensorBoard only; no duplicate PNG directory",
+                )
+                status = {"ok": True}
+            except Exception as error:
+                status = {"ok": False, "error": f"{type(error).__name__}: {error}"}
+            finally:
+                release_ema(self.backend.ema)
+                # VAE is used only for samples; release its resident allocation after this event.
+                self.backend.vae = None
+                unwrap(self.backend.generator).train(generator_mode)
+                restore_rng(training_rng)
+        status = self.runtime.broadcast(status)
+        if not status["ok"]:
+            raise RuntimeError(f"Fixed sample logging failed: {status['error']}")
+
+    def performance(self, cycle_seconds):
+        metrics = {
+            "cycle_seconds": cycle_seconds,
+            "global_batch_size": self.config.per_device_batch_size * self.runtime.world_size,
+            "generator_lr": self.optimizers["generator"].param_groups[0]["lr"],
+            "fake_lr": self.optimizers["fake"].param_groups[0]["lr"],
+        }
+        try:
+            import resource
+
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            metrics["host_process_peak_rss_gib"] = peak / (
+                2**30 if sys.platform == "darwin" else 2**20
+            )
+        except ImportError:
+            pass
+        if self.runtime.device.type == "cuda":
+            metrics.update(
+                cuda_allocated_gib=torch.cuda.memory_allocated() / 2**30,
+                cuda_reserved_gib=torch.cuda.memory_reserved() / 2**30,
+                cuda_peak_allocated_gib=torch.cuda.max_memory_allocated() / 2**30,
+                cuda_peak_reserved_gib=torch.cuda.max_memory_reserved() / 2**30,
+            )
+            torch.cuda.reset_peak_memory_stats()
+        metrics["forward_counts"] = dict(self.state["forward_counts"])
+        self.log("performance", aggregate=True, **metrics)
 
     def run(self, continue_after_warmup=False):
         started = time.monotonic()
@@ -403,6 +548,7 @@ class Trainer:
                 )
                 return
             while self.state["generator_updates"] < self.config.total_generator_updates:
+                cycle_started = time.monotonic()
                 beta, cd_weight = self.config.weights(self.state["generator_updates"])
                 while self.state["fake_in_cycle"] < self.config.fake_updates_per_generator:
                     if self.fake_step(beta):
@@ -414,12 +560,22 @@ class Trainer:
                 self.state["elapsed_training_seconds"] = (
                     elapsed_at_start + time.monotonic() - started
                 )
+                if k % self.config.performance_interval_g_updates == 0:
+                    self.performance(time.monotonic() - cycle_started)
                 if (
                     self.config.probe_interval_g_updates
                     and k % self.config.probe_interval_g_updates == 0
                 ):
                     self.probe()
-                if k % self.config.checkpoint_interval_g_updates == 0:
+                if (
+                    self.config.sample_interval_g_updates
+                    and k % self.config.sample_interval_g_updates == 0
+                ):
+                    self.fixed_samples()
+                if (
+                    k % self.config.checkpoint_interval_g_updates == 0
+                    and k < self.config.total_generator_updates
+                ):
                     save_checkpoint(self)
             self.state["elapsed_training_seconds"] = elapsed_at_start + time.monotonic() - started
             save_checkpoint(self, "final")
@@ -433,4 +589,6 @@ class Trainer:
                 ),
             )
         finally:
+            release_ema(self.backend.ema)
+            self.tensorboard.close()
             self.runtime.close()

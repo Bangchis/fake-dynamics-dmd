@@ -44,12 +44,23 @@ class Config:
     probe_interval_g_updates: int | None = None
     gradient_accumulation_steps: int = 1
     distributed_strategy: str = "single"  # single | ddp. No untested FSDP switch.
+    optimizer_state_sharding: str = "none"  # none | zero1 (DDP, Torch 2.6 rank-local state)
+    teacher_weight_dtype: str = "float32"
+    ema_device: str = "gpu"  # gpu | cpu; master EMA arithmetic always FP32
+    ema_forward_dtype: str = "float32"  # temporary staged copy only
+    tensorboard: bool = False
+    tensorboard_flush_seconds: int = 30
+    sample_interval_g_updates: int | None = None
+    fixed_sample_count: int = 8
+    performance_interval_g_updates: int = 10
+    checkpoint_keep_last: int | None = None  # opt-in pruning of this run's managed checkpoints
     mixed_precision: str = "bf16"  # no | bf16 | fp16
     gradient_checkpointing: bool = False
     conversion_dtype: str = "float64"
     seed: int = 10
     max_consecutive_failed_updates: int = 3
     probe_seed: int = 12345
+    debug_anchor_cycle: bool = False  # deterministic four-anchor coverage for short smoke ONLY
     hardware_and_compute_budget: str | None = None
 
     @classmethod
@@ -90,6 +101,21 @@ class Config:
             )
         if self.distributed_strategy not in ("single", "ddp"):
             raise ValueError("Only single and ddp are implemented; FSDP is not supported")
+        if self.optimizer_state_sharding not in ("none", "zero1"):
+            raise ValueError("optimizer_state_sharding must be none or zero1")
+        if self.optimizer_state_sharding == "zero1":
+            if self.distributed_strategy != "ddp" or self.mixed_precision == "fp16":
+                raise ValueError("zero1 requires DDP and bf16/no precision; fp16 is not supported")
+        if self.teacher_weight_dtype not in ("float32", "bfloat16"):
+            raise ValueError("teacher_weight_dtype must be float32 or bfloat16")
+        if self.ema_device not in ("gpu", "cpu"):
+            raise ValueError("ema_device must be gpu or cpu")
+        if self.ema_forward_dtype not in ("float32", "bfloat16"):
+            raise ValueError("ema_forward_dtype must be float32 or bfloat16")
+        if self.ema_device == "gpu" and self.ema_forward_dtype != "float32":
+            raise ValueError("GPU EMA keeps FP32 parameters; use autocast for its forward")
+        if self.sample_interval_g_updates and not self.tensorboard:
+            raise ValueError("Fixed sample logging requires tensorboard=true")
         if self.gradient_accumulation_steps != 1:
             raise ValueError("Accumulation is not implemented: use gradient_accumulation_steps=1")
         if self.mixed_precision not in ("no", "bf16", "fp16"):
@@ -111,6 +137,9 @@ class Config:
             "teacher_anchor_ramp_g_updates",
             "consistency_ramp_g_updates",
             "max_consecutive_failed_updates",
+            "tensorboard_flush_seconds",
+            "fixed_sample_count",
+            "performance_interval_g_updates",
         ):
             if getattr(self, key) <= 0:
                 raise ValueError(f"{key} must be positive")
@@ -119,6 +148,8 @@ class Config:
             "total_generator_updates",
             "checkpoint_interval_g_updates",
             "probe_interval_g_updates",
+            "sample_interval_g_updates",
+            "checkpoint_keep_last",
         ):
             value = getattr(self, key)
             if value is not None and (not isinstance(value, int) or value <= 0):
@@ -159,6 +190,14 @@ class Config:
         missing = self.missing_runtime_fields()
         if missing:
             raise ValueError(f"Set runtime fields before training: {', '.join(missing)}")
+        if self.debug_anchor_cycle and (
+            self.total_generator_updates > 32
+            or not self.beta_override
+            or not self.consistency_override
+        ):
+            raise ValueError(
+                "debug_anchor_cycle is only for <=32 G smoke with nonzero beta/CD overrides"
+            )
 
     def weights(self, generator_updates: int):
         k = generator_updates

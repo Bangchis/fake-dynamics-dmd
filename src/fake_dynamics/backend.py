@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from .diffusion import Diffusion
+from .ema import OffloadedEMA
 from .weights import import_paired
 
 
@@ -77,7 +78,10 @@ class SDXLBackend:
                 self.provenance = import_paired(g, f, config)
             self.teacher = SDXLEpsilon(
                 UNet2DConditionModel.from_pretrained(
-                    config.backbone, subfolder="unet", torch_dtype=torch.float32, **common
+                    config.backbone,
+                    subfolder="unet",
+                    torch_dtype=getattr(torch, config.teacher_weight_dtype),
+                    **common,
                 )
             )
             self.teacher.requires_grad_(False).eval().to(device)
@@ -85,9 +89,17 @@ class SDXLBackend:
             if config.gradient_checkpointing:
                 g.enable_gradient_checkpointing()
                 f.enable_gradient_checkpointing()
-        self.generator = SDXLEpsilon(g).to(device)
+        self.generator = SDXLEpsilon(g)
         if training:
-            self.ema = copy.deepcopy(self.generator).float().requires_grad_(False).eval()
+            if config.ema_device == "cpu":
+                self.ema = OffloadedEMA(
+                    self.generator, device, getattr(torch, config.ema_forward_dtype)
+                )
+            else:
+                self.ema = (
+                    copy.deepcopy(self.generator).float().requires_grad_(False).eval().to(device)
+                )
+        self.generator.to(device)
         self.vae = None  # Never needed by prompt-only latent training.
 
     @torch.no_grad()
@@ -159,6 +171,10 @@ class ToyBackend:
         self.fake = copy.deepcopy(self.generator)
         self.teacher = copy.deepcopy(self.generator).requires_grad_(False).eval()
         self.ema = copy.deepcopy(self.generator).float().requires_grad_(False).eval()
+        if config.ema_device == "cpu":
+            self.ema = OffloadedEMA(
+                self.generator, device, getattr(torch, config.ema_forward_dtype)
+            )
         self.provenance = {"kind": "synthetic_toy_no_pretrained_weights"}
         self.scheduler_config = {"kind": "synthetic_scaled_linear_for_tests"}
 

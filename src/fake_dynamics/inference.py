@@ -145,7 +145,20 @@ def export_unet(checkpoint, output, weights):
     )
     write_json(
         output.with_suffix(".json"),
-        {"weights": weights, "config": payload["config"], "sha256": sha256_file(output)},
+        {
+            "weights": weights,
+            "config": payload["config"],
+            "config_hash": payload["config_hash"],
+            "sha256": sha256_file(output),
+            "initialization": payload["provenance"],
+            "training_state": payload["state"],
+            "scheduler": payload["scheduler_config"],
+            "source_checkpoint": str(checkpoint),
+            "source_training_sha256": json.loads((Path(checkpoint) / "manifest.json").read_text())[
+                "training_sha256"
+            ],
+            "format": "native Diffusers UNet weights, not full pipeline or resume state",
+        },
     )
 
 
