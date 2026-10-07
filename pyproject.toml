@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fake-dynamics-dmd"
+version = "0.1.0"
+description = "SDXL distillation with teacher-anchored fake dynamics and corrected distribution matching"
+requires-python = ">=3.11,<3.13"
+dependencies = ["torch==2.6.0", "numpy==1.26.4", "PyYAML==6.0.2", "safetensors==0.5.3"]
+
+[project.optional-dependencies]
+sdxl = ["diffusers==0.33.1", "transformers==4.49.0", "accelerate==1.4.0", "huggingface-hub==0.29.3", "Pillow==11.1.0"]
+dev = ["pytest==8.3.5", "ruff==0.11.13"]
+eval = ["torchvision==0.21.0", "scipy==1.15.2", "Pillow==11.1.0", "tqdm==4.67.1", "open-clip-torch==2.30.0", "clean-fid==0.1.35"]
+
+[project.scripts]
+fdmd = "fake_dynamics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

@@ -1,0 +1,12 @@
+# RECIPIENT ONLY: synthetic implementation smoke, no pretrained SDXL or quality claim.
+backend: toy
+resolution: 32
+prompts_path: examples/prompts.jsonl
+output_dir: runs/toy
+per_device_batch_size: 2
+total_generator_updates: 2
+checkpoint_interval_g_updates: 1
+probe_interval_g_updates: 1
+mixed_precision: 'no'
+beta_override: 0.05
+consistency_override: 0.1

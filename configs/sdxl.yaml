@@ -1,0 +1,43 @@
+# Values marked proposed are hypotheses, not tuned or measured hyperparameters.
+backend: sdxl
+backbone: stabilityai/stable-diffusion-xl-base-1.0
+backbone_revision: 462165984030d82259a11f4367a4eed129e94a7b
+generator_checkpoint: null # Full DMD2 019000 pytorch_model.bin, NOT the LoRA release
+guidance_checkpoint: null  # Matching pytorch_model_1.bin containing fake_unet.*
+fake_initialization: paired
+prompts_path: null
+output_dir: runs/main
+resolution: 1024
+prediction_type: epsilon
+generator_anchors: [999, 749, 499, 249]
+teacher_cfg: 8.0
+generator_lr: 5.0e-7
+fake_lr: 5.0e-7
+adam_betas: [0.9, 0.999]
+weight_decay: 0.01
+max_grad_norm: 10.0
+fake_updates_per_generator: 5
+fake_warmup_updates: 0
+fake_timestep_range_inclusive: [0, 999]
+dm_timestep_range_inclusive: [20, 980]
+teacher_anchor_beta_max: 0.05 # proposed
+teacher_anchor_start_g_update: 100
+teacher_anchor_ramp_g_updates: 1000
+consistency_weight_max: 0.1 # proposed
+consistency_ramp_g_updates: 100
+generator_ema_decay: 0.99 # proposed; FP32 EMA only after successful G steps
+beta_override: null
+consistency_override: null
+per_device_batch_size: null # recipient must measure, not assume paper's global batch 128
+total_generator_updates: null
+checkpoint_interval_g_updates: null
+probe_interval_g_updates: null
+gradient_accumulation_steps: 1
+distributed_strategy: single # single or ddp; all four UNets are replicated
+mixed_precision: bf16
+gradient_checkpointing: false
+conversion_dtype: float64 # preserves DMD2 training helper precision for parity inspection
+seed: 10
+max_consecutive_failed_updates: 3
+probe_seed: 12345
+hardware_and_compute_budget: null

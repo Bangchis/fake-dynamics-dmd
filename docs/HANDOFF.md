@@ -1,0 +1,70 @@
+# Recipient handoff
+
+Owner request: package a suitable implementation, preserve enough research and
+engineering context for a third party to implement/debug it, and publish a public
+GitHub repository. The owner has no target environment/GPU available and explicitly
+requested **no tests on the author's small Mac CPU**. Authoring date: 2026-10-08.
+
+This is implementation delivery, not a trained model delivery. The original file
+`original_handoff_vi.md` is preserved as supplied. Its requested hardware checks,
+GPU runs and benchmark are future recipient work, not completed actions.
+
+## Start here
+
+1. Read METHOD.md and DECISIONS.md. Keep the distinction between fixed v0 choices,
+   proposed hyperparameters, adapter choices and unverified benchmark details.
+2. Follow RUNBOOK.md on your machine. Record Python/CUDA/driver/dependency versions,
+   available VRAM/host RAM and disk capacity before loading full checkpoints.
+3. Run static/unit/toy checks, inspect actual G/F checkpoint keys/shapes, then SDXL
+   smoke and a real save/resume check. See VERIFICATION.md for evidence to save.
+4. Evaluate initialization with the same chosen sample/metric protocol before
+   continuation training. Fix benchmark comparability in EVALUATION.md.
+5. Choose batch, strategy and total G updates from measured resources. The beta
+   ramp reaches its maximum only at k_G=1100; leave a meaningful post-ramp phase.
+
+## What is ready to review
+
+The package has executable training/inference/evaluation entrypoints, rather than
+an empty integration template. Numerical kernels are separate from the SDXL backend
+so a maintainer can isolate sampler, signs, coefficient broadcasts and detach
+boundaries. Training consumes prompt JSONL directly and never builds the original
+LMDB real-image loaders. No discriminator is loaded into either optimizer.
+
+Native DDP and AMP handling are implemented but unexecuted. Checkpoint schema 1
+stores G/F/EMA, AdamW, AMP scalers, counters, warmup/cycle progress, per-rank RNG and
+prompt-stream states, fixed-probe history, scheduler coefficients/config and
+initialization provenance. Teacher/text encoders are reloaded from the pinned
+backbone revision. No automatic checkpoint deletion or best-model replacement.
+
+Full SDXL is intentionally full-weight training. This implementation does not solve
+the substantial memory requirements with speculative FSDP/LoRA/CPU offload. DDP
+replicates the model/optimizer state; it does not make each replica smaller. Need
+for sharding/accumulation is an engineering extension to design and verify on the
+actual hardware, not a flag to silently switch on.
+
+## First integration uncertainties to resolve
+
+- Actual checkpoint keys, tensor shapes and paired-F extraction have not been
+  inspected on downloaded weights. `inspect-checkpoint` and strict import expose
+  failures without weakening key matching.
+- Installed SDXL/Diffusers forwards, gradient checkpointing and precision have not
+  run with real weights. Top-level dependency versions are pinned; transitive
+  versions and hardware behavior must be recorded from the recipient environment.
+- Real save/resume, AMP overflow and multi-rank paths need execution. Unit tests
+  cover intended CPU behavior; no passing result is asserted here.
+- FID/CLIP bridge uses pinned DMD2 metric code. Seed policy is deliberately explicit
+  and differs from its original batched stream. Feature-weight caches/resize/library
+  versions still need protocol audit before comparing to the paper.
+- ImageReward/HPS v2.1/HPS v3 require recipient metric plugins with verified models,
+  versions, aggregation and scales. Missing metrics are null with a reason.
+- Fitting adequacy, critic lag, CD dynamics, stability, GPU cost and final quality
+  are research questions. No trained checkpoints or scores are included.
+
+## Return package after a successful run
+
+Deliver the commit SHA, resolved config/hash, environment freeze, asset hashes,
+JSONL logs for every rank, initial/pilot/final evaluation manifests, G and EMA weight
+choice, retained checkpoints, fixed prompt/seed samples, resource measurements and
+the completed verification checklist. Report FID, CLIP-S, ImageReward, HPS v2.1 and
+HPS v3 with each column's scaling. Keep absent values absent rather than inventing
+numbers or copying the paper's row as a measured result.
