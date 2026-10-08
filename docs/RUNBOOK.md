@@ -113,7 +113,9 @@ Copy `configs/sdxl.yaml` to gitignored `configs/local-pilot.yaml`. Set actual pa
 batch, total successful G updates, checkpoint/probe intervals, strategy, precision,
 gradient checkpointing and hardware budget. Keep beta/CD overrides **null** for
 the proposed method. A run config records the actual global batch as per-device
-batch × world size. The runtime rejects gradient accumulation other than 1.
+batch × world size × gradient_accumulation_steps. Accumulation is implemented for
+both F and G with one optimizer/EMA update per mean-reduced window. Set
+target_global_batch_size to fail on mismatch; H100 config selects 128.
 
 ```bash
 fdmd plan --config configs/local-pilot.yaml

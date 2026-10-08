@@ -13,7 +13,9 @@ def test_unknown_config_field_is_not_silently_ignored(tmp_path):
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("gradient_accumulation_steps", 2),
+        ("gradient_accumulation_steps", 0),
+        ("gradient_accumulation_steps", 1.5),
+        ("gradient_accumulation_steps", True),
         ("distributed_strategy", "fsdp"),
         ("prediction_type", "v_prediction"),
         ("generator_anchors", (999, 0)),

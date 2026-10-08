@@ -12,8 +12,8 @@ Nguồn cho từng thông số nằm trong [CONFIG_SOURCES.md](CONFIG_SOURCES.md
 | Initialization | cặp full DMD2 G/F 019000; optimizers mới |
 | Hardware mode | 1 node, 2 ranks DDP; ZeroRedundancyOptimizer stage 1 |
 | Precision / memory | G/F FP32 + BF16 autocast; teacher BF16; EMA master FP32 CPU, snapshot BF16 CUDA |
-| Batch | 1/GPU → global 2; accumulation 1; activation checkpointing bật |
-| LR G/F | 5e-7 / 5e-7, constant; AdamW (0.9,0.999), decay 0.01, clip 10 |
+| Batch | **2/GPU × 2 ranks × accumulation 32 = effective global 128**; activation checkpointing bật |
+| LR G/F | **1e-6 / 1e-6** theo chủ repo chọn; constant; AdamW (0.9,0.999), decay 0.01, clip 10 |
 | Updates | 5 F thành công → 1 G thành công |
 | Teacher CFG | 8; sampler G không dùng external CFG |
 | Beta | 0 → max 0.05, bắt đầu k_G=100, đạt max ở 1100 |
@@ -22,6 +22,18 @@ Nguồn cho từng thông số nằm trong [CONFIG_SOURCES.md](CONFIG_SOURCES.md
 | Logs | JSONL từng update/rank + TensorBoard; probe mỗi 25 G; performance mỗi 10 G |
 | Fixed images | 8 training prompts × G/EMA mỗi 250 G; cùng initial/re-noising seed; lưu vào TensorBoard |
 | Resume checkpoints | mỗi 500 G, chỉ giữ latest; cuối run không viết trùng periodic cùng G |
+
+Batch hiệu dụng 128 theo [DMD2 Appendix F.4](https://arxiv.org/html/2405.14867v2#A6.SS4),
+paper chạy 64 GPU với physical batch 2. LR paper là 5e-7; LR hiện tại gấp đôi theo
+yêu cầu chủ repo. Teacher CFG=8 cũng từ Appendix F.4; [demo full-weight gốc](https://github.com/tianweiy/DMD2/blob/8d8fa55633d47cfb81bbc7a892e7248f9518763f/demo/text_to_image_sdxl.py#L142-L176)
+chỉ gọi G một nhánh có prompt, không trộn unconditional G. CFG teacher được học
+qua distillation; không thêm external CFG vào sampler đánh giá này.
+
+Trong mỗi optimizer update, 32 microbatch giữ nguyên weights và một anchor chung
+trên cả hai ranks. Loss chia 32, DDP lấy mean giữa ranks, chỉ unscale/clip/step một
+lần; EMA và lịch beta/CD chỉ tăng theo G update thành công. Không giữ 32 graphs
+trên GPU cùng lúc. Mỗi F update cũng dùng batch 128; tỷ lệ vẫn là 5 F : 1 G.
+Target 128 được kiểm tra lúc khởi tạo để không âm thầm chạy sai batch.
 
 DDP vẫn giữ toàn bộ G/F trên mỗi GPU; stage 1 chia AdamW state. CPU EMA chuyển
 snapshot tạm sang CUDA cho targets rồi giải phóng trước backward/optimizer step.
@@ -71,21 +83,28 @@ bash scripts/run_h100.sh smoke
 python scripts/check_smoke.py "$RUN_ROOT/smoke"
 bash scripts/run_h100.sh smoke-resume
 python scripts/check_smoke.py "$RUN_ROOT/smoke" --expected-updates 12
+bash scripts/run_h100.sh batch-smoke
+python scripts/check_smoke.py "$RUN_ROOT/batch-smoke" --expected-updates 4
 ```
 
-Smoke ép beta/CD khác 0 và lần lượt cả bốn G anchors để bao phủ các nhánh. Chỉ dùng
+Smoke/resume ngắn dùng accumulation 2 (global 8 nếu physical 2) để kiểm tra loop,
+DDP accumulation và resume. Sau đó `batch-smoke` dùng **đúng global 128**, bốn G
+update/bốn anchors để đo full window. Hai run có directory/config riêng, không
+resume từ smoke nhỏ vào training. Smoke ép beta/CD khác 0 để bao phủ các nhánh. Chỉ dùng
 ở run smoke riêng. Chương trình kiểm tra logs/counters/đủ rank files; kiểm tra
 tensor ownership, teacher frozen, EMA timing và replay số học vẫn cần tests cùng
 GPU inspection. Resume phải khôi phục counters, prompt cursor, RNG và local AdamW
 partition. Cần cùng Torch build, rank topology, batch, dataset hash và config khoa
 học. Kiểm tra `tests/test_h100_runtime.py` trước khi dùng rank-local resume dài.
 
-Đọc peak VRAM từng rank, throughput, host RAM và tốc độ checkpoint. Batch 1 là
-mức bắt đầu bảo thủ. Nếu muốn thử batch 2/GPU, dùng `PER_DEVICE_BATCH_SIZE=2` và
-`RUN_ROOT` mới, chạy lại smoke. Chốt một batch rồi giữ nguyên cho tất cả candidate,
-control và continuation. Code sẽ từ chối resume với batch khác. Nếu batch 1 vẫn
-OOM, dừng và ghi vị trí/peak thực tế để điều chỉnh memory backend; không giảm
-resolution hoặc bật FSDP/accumulation chưa được triển khai.
+Đọc peak VRAM từng rank, throughput, host RAM và tốc độ checkpoint. Physical 2 là
+cấu hình đích chưa đo, không phải cam kết vừa VRAM. Nếu OOM, chọn
+`PER_DEVICE_BATCH_SIZE=1` và `RUN_ROOT` mới, chạy lại smoke/resume/batch-smoke.
+Launcher tự chọn accumulation 64 cho các stage khoa học, vẫn global 128 và LR
+1e-6. Có thể thử physical 4/accumulation 16 nếu đo được còn VRAM; physical batch
+nhân hai ranks phải chia hết 128. Chốt physical batch và accumulation rồi giữ
+nguyên cho mọi candidate/control/continuation; resume khác cấu hình bị từ chối.
+Nếu physical 1 vẫn OOM, ghi operation/peak để sửa memory backend; chưa có FSDP.
 
 ## Hai đường chạy, chọn theo ngân sách
 
@@ -115,13 +134,59 @@ Không chọn trước winner chỉ vì tên default. Sweep 900 G tổng chỉ s
 cho winner thêm 1200 G đến 1500; control 1500 G. Tổng giai đoạn screen + confirm +
 control là **3600 G / 18000 F** khi mọi bước thành công. Nếu tiếp tục winner đến
 5000 tổng G, toàn bộ kế hoạch là **7100 G / 35500 F**, chưa tính smoke hay retries.
-Không có ước lượng giờ chạy cho đến khi đo throughput.
+Để so kết quả cuối ở cùng budget, chạy `bash scripts/run_h100.sh baseline-main`
+cho control từ 1500 đến 5000 G. Khi đó kế hoạch đầy đủ gồm sweep là
+**10600 G / 53000 F**. Nếu không sweep: pilot/control rồi cả hai đến 5000 là
+**10000 G / 50000 F**.
+
+Mỗi optimizer update dùng 128 samples: screen 300 G = **38400 G samples**,
+pilot 1500 G = **192000 G / 960000 F samples**, final mỗi run 5000 G =
+**640000 G / 3200000 F samples** (có thể lặp prompts giữa epochs). Với cùng số
+update, global 128 xử lý gấp 64 lần số samples của global 2 trước đây. Accumulation
+tiết kiệm VRAM, không bỏ chi phí forward/backward. Đo full `batch-smoke` trước khi
+chốt thời gian/ngân sách; chưa có ước lượng giờ chạy.
 
 Control là beta=0/CD=0 trong cùng adapter decoupled/prompt-only. So winner/control
 ở 1500 G, cùng batch và compute-unit convention; baseline initialization ở k_G=0
 cũng phải được đánh giá. Control này không phải reproduction official DMD2 có GAN.
+Nếu kết luận gain ở 5000 G, so winner/control cùng 5000 G và cùng evaluator/seeds.
+Ghi cả sample/update budget và GPU-hours: beta/CD thêm teacher/EMA/F calls nên
+thời gian không bằng nhau dù cùng số update. Tách chi phí continuation khỏi chi
+phí DMD2 đã dùng để tạo checkpoint warm-start. Không gọi đây là fair reproduction
+paper chỉ vì batch 128: còn khác LR, loss/GAN, precision và initialization.
 Nếu cần tách tác dụng beta và CD sau đó, thêm từng ablation beta-only/CD-only bằng
 run mới; chưa đưa chúng vào ngân sách mặc định.
+
+Trước khi so điểm, đối chiếu metadata thật ở latest checkpoint. Ví dụ control với
+cd-default cùng 1500 G (hoặc cùng 5000 G sau continuation):
+
+```bash
+python -m fake_dynamics.comparison "$RUN_ROOT/control" "$RUN_ROOT/cd-default" \
+  --allow-field beta_override --allow-field consistency_override
+```
+
+Nếu winner CD 0.03/0.3, thêm `--allow-field consistency_weight_max` và đúng run
+path. So hai screen candidate thì chỉ khai báo `consistency_weight_max`. Tool
+đọc JSON, không load weights; liệt kê khác biệt và trả exit code 1 nếu còn khác
+biệt ngoài các research fields khai báo, thiếu provenance, sai effective batch,
+khác số G/F update hoặc có skipped windows làm lệch data exposure.
+
+Khi có evaluation reports, kiểm tra thêm checkpoint, prompts/seeds/count, G/EMA,
+sampler/CFG, resize/reference hash và metric version/revision/scale:
+
+```bash
+python -m fake_dynamics.comparison "$RUN_ROOT/control" "$RUN_ROOT/cd-default" \
+  --allow-field beta_override --allow-field consistency_override \
+  --left-report reports/control/evaluation_manifest.json \
+  --right-report reports/cd-default/evaluation_manifest.json
+```
+
+Metric đang thiếu không được gán điểm paper; nếu chỉ một bên có metric, auditor
+báo khác biệt. Dùng checkpoints của phiên bản 0.3 trở lên vì JSON manifest mới
+lưu đủ config/environment/hashes cho audit. Manifest match chỉ chứng minh metadata
+đã đối chiếu: numerical correctness, độ tin cậy thống kê và paper protocol parity
+vẫn cần kiểm chứng. Nên chạy cùng danh sách seeds lặp cho winner/control khi
+chênh lệch metric nhỏ; giữ và báo từng seed thay vì chỉ lấy seed đẹp nhất.
 
 Chọn candidate theo protocol viết xuống **trước khi xem điểm**: bỏ run có
 nonfinite/skip lặp, drift/collapse rõ hoặc metric thiếu provenance; so fixed
@@ -146,7 +211,8 @@ tensorboard --logdir "$RUN_ROOT" --port 6006
 - `generator_by_kG`: direct/CD loss, DM/CA norm, gradient ratio trong output space,
   CD active/anchor, endpoint stats, LR/clip/success, thời gian update EMA CPU và logical forward counts.
 - `probe_by_kG`: noise/prompt cố định; critic tracking, drift G/F và CD residual.
-- `performance_by_kG`: global batch, thời gian cycle, VRAM allocated/reserved/peak và peak RSS của từng process (không phải RAM toàn node).
+- `performance_by_kG`: effective global batch, global microbatch, accumulation, số mẫu G/F thành công, thời gian cycle, VRAM allocated/reserved/peak và peak RSS từng process (không phải RAM toàn node).
+- Mỗi G/F event ghi microbatches đã xử lý, local/global sample count và anchor sample count. Loss lấy mean; sparse corrected-error lấy mean có trọng số số mẫu. Output-gradient norm ghép microbatches theo tổng bình phương/chia accumulation; dashboard lấy mean giữa ranks, không phải global parameter-gradient alignment.
 - `fixed_samples`: G online và EMA trên cùng 8 prompts/seeds.
 - `evaluation`: chỉ điểm từ report đánh giá thật, kèm provenance dạng text.
 

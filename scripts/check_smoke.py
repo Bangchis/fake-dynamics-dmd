@@ -27,6 +27,16 @@ def check(run_dir, expected_updates):
         for row in generator:
             assert row["beta"] == 0.05 and row["lambda_cd"] == 0.1
             assert row["cd_active"] == (row["anchor"] != 249), "Wrong CD branch"
+            assert row["microbatches_processed"] == row["accumulation_steps"] > 1, (
+                "Incomplete accumulation"
+            )
+            assert 2 * row["local_samples_processed"] == row["global_batch_size"], (
+                "Wrong effective batch"
+            )
+            assert (
+                sum(row[f"anchor_samples_{a}"] for a in (999, 749, 499, 249))
+                == row["local_samples_processed"]
+            )
         rank_sequences.append([(row["k_G"], row["k_F"], row["anchor"]) for row in generator])
         assert not any(row["event"] == "optimizer_step_skipped" for row in rows), (
             "Investigate skips"

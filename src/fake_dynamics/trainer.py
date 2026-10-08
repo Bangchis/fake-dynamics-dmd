@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -130,7 +131,11 @@ class Trainer:
                     "environment": environment_manifest(),
                     "initialization": self.backend.provenance,
                     "scheduler": self.backend.scheduler_config,
-                    "global_batch_size": config.per_device_batch_size * self.runtime.world_size,
+                    "global_batch_size": self.runtime.effective_batch_size,
+                    "global_microbatch_size": config.per_device_batch_size
+                    * self.runtime.world_size,
+                    "gradient_accumulation_steps": config.gradient_accumulation_steps,
+                    "batch_reduction": "mean over ranks and microbatches; clip/step/EMA once per optimizer window",
                     "world_size": self.runtime.world_size,
                     "prompt_sha256": self.data.file_hash,
                     "normalization": "dmd2_x0_branchwise_cfg_reference_adapter",
@@ -190,20 +195,26 @@ class Trainer:
             self.shape,
             self.runtime.device,
             anchor_index=(
-                self.state["generator_updates"] % 4 if self.config.debug_anchor_cycle else None
+                self.state["generator_updates"] % 4
+                if self.config.debug_anchor_cycle
+                else getattr(self, "_window_anchor_index", None)
             ),
         )
         self.state["forward_counts"]["generator"] += (999 - tau) // 250
         return c, tau, h
 
-    def optimizer_step(self, name, loss):
+    def optimizer_step(self, name, loss, *, backward_done=False, window_finite=True):
         optimizer = self.optimizers[name]
         scaler = self.scalers[name]
         parameters = list(getattr(self.backend, name).parameters())
         self.state[f"{name}_attempts"] += 1
         succeeded, norm = False, float("nan")
-        if self.runtime.all_true(bool(torch.isfinite(loss.detach()).all())):
+        finite = self.runtime.all_true(window_finite and bool(torch.isfinite(loss.detach()).all()))
+        if not backward_done and (finite or self.runtime.world_size > 1):
+            # Even invalid DDP losses must complete reducer hooks on every rank before
+            # discarding the window. Otherwise the next forward can hang/fail.
             scaler.scale(loss).backward()
+        if finite:
             scaler.unscale_(optimizer)  # exactly once
             norm_tensor = torch.nn.utils.clip_grad_norm_(parameters, self.config.max_grad_norm)
             norm = float(norm_tensor.item())
@@ -216,6 +227,9 @@ class Trainer:
             elif scaler.is_enabled():
                 # All ranks skip together, including ranks with finite local gradients.
                 scaler.update(new_scale=scaler.get_scale() / 2)
+        elif backward_done and scaler.is_enabled():
+            # Initialize scaler state even if the first microbatch was nonfinite.
+            scaler.update(new_scale=scaler.get_scale() / 2)
         optimizer.zero_grad(set_to_none=True)
         if succeeded:
             self.state[f"{name}_updates"] += 1
@@ -244,9 +258,95 @@ class Trainer:
                 )
         return succeeded, norm
 
-    def fake_step(self, beta):
-        started = time.monotonic()
-        self.optimizers["fake"].zero_grad(set_to_none=True)
+    def accumulated_step(self, name, microbatch):
+        """One logical optimizer update; no model/EMA/schedule changes within its window."""
+        count = self.config.gradient_accumulation_steps
+        if count > 1 and not self.config.debug_anchor_cycle:
+            # DMD2 uses ONE shared anchor per optimizer minibatch. Hold it across
+            # ranks AND microbatches instead of silently mixing all four anchors.
+            selected = torch.randint(0, 4, (1,), device=self.runtime.device)
+            if self.runtime.world_size > 1:
+                torch.distributed.broadcast(selected, src=0)
+            self._window_anchor_index = int(selected.item())
+        self.optimizers[name].zero_grad(set_to_none=True)
+        rows = []
+        window_finite = True
+        for index in range(count):
+            with self.runtime.accumulation_context(getattr(self.backend, name), index == count - 1):
+                loss, metrics = microbatch()
+                rows.append(metrics)
+                if count == 1:
+                    success, norm = self.optimizer_step(name, loss)
+                else:
+                    window_finite = self.runtime.all_true(bool(torch.isfinite(loss.detach())))
+                    # Mean reduction, not a sum. Backward immediately releases this graph;
+                    # never retain 32/64 SDXL graphs. Keep even rejected DDP hooks paired.
+                    self.scalers[name].scale(loss / count).backward()
+            del loss
+            if not window_finite:
+                break
+        metrics = self.reduce_microbatch_metrics(rows, count)
+        self._window_anchor_index = None
+        if count > 1:
+            success, norm = self.optimizer_step(
+                name,
+                torch.tensor(metrics["loss"], device=self.runtime.device),
+                backward_done=True,
+                window_finite=window_finite,
+            )
+        metrics.update(
+            success=success,
+            grad_norm=norm,
+            gradient_clipped=norm > self.config.max_grad_norm,
+            microbatches_processed=len(rows),
+            accumulation_steps=count,
+            local_samples_processed=len(rows) * self.config.per_device_batch_size,
+            global_samples_processed=len(rows)
+            * self.config.per_device_batch_size
+            * self.runtime.world_size,
+            global_batch_size=self.runtime.effective_batch_size,
+        )
+        return success, metrics
+
+    def reduce_microbatch_metrics(self, rows, count):
+        result = {}
+        for key in set().union(*(row.keys() for row in rows)):
+            if key in ("anchor", "cd_active", "cd_to_direct_y_gradient_ratio"):
+                continue
+            values = [row[key] for row in rows if row.get(key) is not None]
+            if key.startswith("samples_"):
+                result[key] = sum(values)
+            elif key.startswith("corrected_error_"):
+                weights = [row[key.replace("corrected_error_", "samples_")] for row in rows]
+                total = sum(weights)
+                result[key] = (
+                    sum((row[key] or 0.0) * weight for row, weight in zip(rows, weights)) / total
+                    if total
+                    else None
+                )
+            elif key in ("direct_y_gradient_norm", "weighted_cd_y_gradient_norm"):
+                # Output blocks are disjoint across microbatches, so combine their
+                # gradient norms in quadrature, including the loss/count reduction.
+                result[key] = math.sqrt(sum(value**2 for value in values)) / count
+            elif key in ("dm_output_norm", "ca_output_norm"):
+                result[key] = math.sqrt(sum(value**2 for value in values))
+            else:
+                result[key] = sum(values) / len(values) if values else None
+        anchors = {row["anchor"] for row in rows}
+        result["anchor"] = next(iter(anchors)) if len(anchors) == 1 else None
+        for anchor in self.config.generator_anchors:
+            result[f"anchor_samples_{anchor}"] = (
+                sum(row["anchor"] == anchor for row in rows) * self.config.per_device_batch_size
+            )
+        if "cd_active" in rows[0]:
+            result["cd_active"] = any(row["cd_active"] for row in rows)
+            result["cd_active_fraction"] = sum(row["cd_active"] for row in rows) / len(rows)
+            result["cd_to_direct_y_gradient_ratio"] = result["weighted_cd_y_gradient_norm"] / max(
+                result["direct_y_gradient_norm"], 1e-12
+            )
+        return result
+
+    def fake_microbatch(self, beta):
         d = self.backend.diffusion
         with self.runtime.autocast():
             with torch.no_grad():
@@ -264,12 +364,10 @@ class Trainer:
             fake = self.backend.fake(x, t, c)
             self.state["forward_counts"]["fake"] += 1
             loss = (fake.float() - target).square().mean()
-        success, norm = self.optimizer_step("fake", loss)
         metrics = {
+            "loss": float(loss.detach()),
             "loss_fake_mixed": float(loss.detach()),
-            "grad_norm": norm,
             "anchor": tau,
-            "success": success,
         }
         # For beta=0 teacher_cfg is irrelevant; this is exact ordinary fake error.
         with torch.no_grad():
@@ -283,19 +381,21 @@ class Trainer:
                     float(error[mask].mean()) if mask.any() else None
                 )
                 metrics[f"samples_{low}_{high}"] = int(mask.sum())
-        # This minibatch statistic is not a held-out oracle estimate of critic lag.
+        return loss, metrics
+
+    def fake_step(self, beta):
+        started = time.monotonic()
+        success, metrics = self.accumulated_step("fake", lambda: self.fake_microbatch(beta))
+        # This training-window statistic is not a held-out oracle estimate of critic lag.
         metrics.update(
             step_seconds=time.monotonic() - started,
             optimizer_attempt=self.state["fake_attempts"],
             learning_rate=self.optimizers["fake"].param_groups[0]["lr"],
-            gradient_clipped=norm > self.config.max_grad_norm,
         )
         self.log("fake_step", beta=beta, aggregate=True, **metrics)
         return success
 
-    def generator_step(self, beta, cd_weight):
-        started = time.monotonic()
-        self.optimizers["generator"].zero_grad(set_to_none=True)
+    def generator_microbatch(self, beta, cd_weight):
         d = self.backend.diffusion
         with self.runtime.autocast():
             c, tau, h = self.fresh_input()
@@ -334,12 +434,34 @@ class Trainer:
             loss_cd = consistency_loss(y, target_cd)
             loss = loss_direct + cd_weight * loss_cd
         release_ema(self.backend.ema)
-        success, norm = self.optimizer_step("generator", loss)
         direct_output_norm = float(gradient.norm()) / y.numel()
         cd_output_gradient = (
             torch.zeros_like(y)
             if target_cd is None
             else (2 * cd_weight * (y.detach() - target_cd) / y.numel())
+        )
+        metrics = dict(
+            anchor=tau,
+            loss=float(loss.detach()),
+            loss_direct=float(loss_direct.detach()),
+            loss_cd=float(loss_cd.detach()),
+            dm_output_norm=float(g_dm.norm()),
+            ca_output_norm=float(g_ca.norm()),
+            direct_y_gradient_norm=direct_output_norm,
+            weighted_cd_y_gradient_norm=float(cd_output_gradient.norm()),
+            cd_active=target_cd is not None,
+            **(
+                {"cd_endpoint_mean": float(hs.mean()), "cd_endpoint_std": float(hs.std())}
+                if target_cd is not None
+                else {}
+            ),
+        )
+        return loss, metrics
+
+    def generator_step(self, beta, cd_weight):
+        started = time.monotonic()
+        success, metrics = self.accumulated_step(
+            "generator", lambda: self.generator_microbatch(beta, cd_weight)
         )
         self.log(
             "generator_step",
@@ -347,30 +469,12 @@ class Trainer:
             beta=beta,
             lambda_cd=cd_weight,
             schedule_for_next_update=self.config.weights(self.state["generator_updates"]),
-            success=success,
-            anchor=tau,
-            loss=float(loss.detach()),
-            loss_direct=float(loss_direct.detach()),
-            loss_cd=float(loss_cd.detach()),
-            grad_norm=norm,
-            gradient_clipped=norm > self.config.max_grad_norm,
             step_seconds=time.monotonic() - started,
             ema_update_seconds=self.state.get("last_ema_update_seconds", 0.0) if success else 0.0,
             optimizer_attempt=self.state["generator_attempts"],
             learning_rate=self.optimizers["generator"].param_groups[0]["lr"],
-            dm_output_norm=float(g_dm.norm()),
-            ca_output_norm=float(g_ca.norm()),
-            direct_y_gradient_norm=direct_output_norm,
-            weighted_cd_y_gradient_norm=float(cd_output_gradient.norm()),
-            cd_to_direct_y_gradient_ratio=float(cd_output_gradient.norm())
-            / max(direct_output_norm, 1e-12),
-            cd_active=target_cd is not None,
             forward_counts=dict(self.state["forward_counts"]),
-            **(
-                {"cd_endpoint_mean": float(hs.mean()), "cd_endpoint_std": float(hs.std())}
-                if target_cd is not None
-                else {}
-            ),
+            **metrics,
         )
         return success
 
@@ -504,7 +608,13 @@ class Trainer:
     def performance(self, cycle_seconds):
         metrics = {
             "cycle_seconds": cycle_seconds,
-            "global_batch_size": self.config.per_device_batch_size * self.runtime.world_size,
+            "global_batch_size": self.runtime.effective_batch_size,
+            "global_microbatch_size": self.config.per_device_batch_size * self.runtime.world_size,
+            "accumulation_steps": self.config.gradient_accumulation_steps,
+            "successful_generator_samples": self.state["generator_updates"]
+            * self.runtime.effective_batch_size,
+            "successful_fake_samples": self.state["fake_updates"]
+            * self.runtime.effective_batch_size,
             "generator_lr": self.optimizers["generator"].param_groups[0]["lr"],
             "fake_lr": self.optimizers["fake"].param_groups[0]["lr"],
         }

@@ -20,8 +20,8 @@ class Config:
     prediction_type: str = "epsilon"
     generator_anchors: tuple[int, ...] = (999, 749, 499, 249)
     teacher_cfg: float = 8.0
-    generator_lr: float = 5e-7
-    fake_lr: float = 5e-7
+    generator_lr: float = 1e-6
+    fake_lr: float = 1e-6
     adam_betas: tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 0.01
     max_grad_norm: float = 10.0
@@ -43,6 +43,7 @@ class Config:
     checkpoint_interval_g_updates: int | None = None
     probe_interval_g_updates: int | None = None
     gradient_accumulation_steps: int = 1
+    target_global_batch_size: int | None = None  # assert physical batch * ranks * accumulation
     distributed_strategy: str = "single"  # single | ddp. No untested FSDP switch.
     optimizer_state_sharding: str = "none"  # none | zero1 (DDP, Torch 2.6 rank-local state)
     teacher_weight_dtype: str = "float32"
@@ -116,8 +117,11 @@ class Config:
             raise ValueError("GPU EMA keeps FP32 parameters; use autocast for its forward")
         if self.sample_interval_g_updates and not self.tensorboard:
             raise ValueError("Fixed sample logging requires tensorboard=true")
-        if self.gradient_accumulation_steps != 1:
-            raise ValueError("Accumulation is not implemented: use gradient_accumulation_steps=1")
+        if (
+            type(self.gradient_accumulation_steps) is not int
+            or self.gradient_accumulation_steps < 1
+        ):
+            raise ValueError("gradient_accumulation_steps must be a positive integer")
         if self.mixed_precision not in ("no", "bf16", "fp16"):
             raise ValueError("mixed_precision must be no, bf16, or fp16")
         if self.conversion_dtype not in ("float32", "float64"):
@@ -150,9 +154,10 @@ class Config:
             "probe_interval_g_updates",
             "sample_interval_g_updates",
             "checkpoint_keep_last",
+            "target_global_batch_size",
         ):
             value = getattr(self, key)
-            if value is not None and (not isinstance(value, int) or value <= 0):
+            if value is not None and (type(value) is not int or value <= 0):
                 raise ValueError(f"{key} must be a positive integer or null")
         for key in (
             "teacher_anchor_beta_max",

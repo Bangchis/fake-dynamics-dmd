@@ -3,6 +3,7 @@ import os
 import platform
 import random
 import subprocess
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,16 @@ class Runtime:
     def __init__(self, config):
         self.rank = int(os.environ.get("RANK", 0))
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
+        self.effective_batch_size = (
+            config.per_device_batch_size * self.world_size * config.gradient_accumulation_steps
+        )
+        if config.target_global_batch_size is not None and (
+            self.effective_batch_size != config.target_global_batch_size
+        ):
+            raise ValueError(
+                f"Effective global batch {self.effective_batch_size} != target "
+                f"{config.target_global_batch_size}; adjust physical batch/accumulation/ranks"
+            )
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         if config.distributed_strategy == "single" and self.world_size != 1:
             raise ValueError("torchrun requires distributed_strategy=ddp")
@@ -56,6 +67,12 @@ class Runtime:
         return torch.autocast(
             self.device.type, dtype=dtype, enabled=self.config.mixed_precision != "no"
         )
+
+    def accumulation_context(self, model, final_microbatch):
+        # DDP requires BOTH forward and backward inside no_sync for earlier microbatches.
+        if isinstance(model, DistributedDataParallel) and not final_microbatch:
+            return model.no_sync()
+        return nullcontext()
 
     def make_optimizer(self, model, learning_rate):
         settings = {
@@ -132,7 +149,9 @@ class Runtime:
         for index, key in enumerate(keys):
             numerator, denominator = array[index].tolist()
             result[key] = numerator / denominator if denominator else None
-            if key.startswith(("samples_", "heldout_samples_", "forward_counts/")):
+            if key.startswith(
+                ("samples_", "heldout_samples_", "anchor_samples_", "forward_counts/")
+            ):
                 result[key] = numerator
         result.update(zip(maximum_keys, maxima.tolist()))
         result.pop("forward_counts", None)  # flattened global counts replace local nested counts

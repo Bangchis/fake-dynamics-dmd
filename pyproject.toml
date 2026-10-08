@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fake-dynamics-dmd"
-version = "0.2.0"
+version = "0.3.0"
 description = "SDXL distillation with teacher-anchored fake dynamics and corrected distribution matching"
 requires-python = ">=3.11,<3.13"
 dependencies = ["torch==2.6.0", "numpy==1.26.4", "PyYAML==6.0.2", "safetensors==0.5.3"]

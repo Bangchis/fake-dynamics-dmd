@@ -11,7 +11,7 @@ import torch
 
 from .data import sha256_file
 from .ema import ema_master, release_ema
-from .runtime import restore_rng, rng_state, unwrap, write_json
+from .runtime import environment_manifest, restore_rng, rng_state, unwrap, write_json
 
 SCHEMA_VERSION = 2
 
@@ -141,6 +141,12 @@ def save_checkpoint(trainer, label="periodic"):
                     "label": label,
                     "saved_unix_ns": time.time_ns(),
                     "config_hash": trainer.config.digest(),
+                    "config": trainer.config.as_dict(),
+                    "world_size": runtime.world_size,
+                    "global_batch_size": runtime.effective_batch_size,
+                    "prompt_sha256": trainer.data.file_hash,
+                    "scheduler": trainer.backend.scheduler_config,
+                    "environment": environment_manifest(),
                     "state": trainer.state,
                     "schedule_weights": payload["schedule_weights"],
                     "training_sha256": sha256_file(temp / "training.pt"),

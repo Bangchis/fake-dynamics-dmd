@@ -12,8 +12,8 @@ resolution: 1024
 prediction_type: epsilon
 generator_anchors: [999, 749, 499, 249]
 teacher_cfg: 8.0
-generator_lr: 5.0e-7
-fake_lr: 5.0e-7
+generator_lr: 1.0e-6 # owner-selected; DMD2 reference is 5e-7
+fake_lr: 1.0e-6
 adam_betas: [0.9, 0.999]
 weight_decay: 0.01
 max_grad_norm: 10.0
@@ -29,7 +29,8 @@ consistency_ramp_g_updates: 100
 generator_ema_decay: 0.99 # target-network hypothesis, NOT CM's evaluation EMA
 beta_override: null
 consistency_override: null
-per_device_batch_size: 1 # global 2; hardware adaptation, not DMD2's global 128
+per_device_batch_size: 2 # 2 samples/GPU * 2 ranks * 32 microbatches = effective global 128
+target_global_batch_size: 128 # reject silent batch/rank/accumulation mismatches
 total_generator_updates: 1500 # successful G updates; 7500 F, beyond full beta at 1100
 checkpoint_interval_g_updates: 500
 checkpoint_keep_last: 1 # only own completed periodic/final checkpoints; .pin protected
@@ -43,7 +44,7 @@ distributed_strategy: ddp
 optimizer_state_sharding: zero1
 mixed_precision: bf16
 gradient_checkpointing: true
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 32 # clip/step/EMA/schedules once per logical optimizer update
 teacher_weight_dtype: bfloat16
 ema_device: cpu
 ema_forward_dtype: bfloat16 # temporary CUDA snapshot; CPU master/update remains FP32

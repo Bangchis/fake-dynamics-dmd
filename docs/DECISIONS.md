@@ -12,7 +12,7 @@
 | 5 successful F then 1 successful G | Follows supplied pseudocode; differs in interleaving from original outer-loop implementation. Beta fixed per cycle, skip retries keep intended success counts. |
 | Fresh constant-LR AdamW | No inherited source optimizer/outer-loop LR scheduler. No 5× unit mismatch; any future G/F-unit LR schedule must be saved/restored. |
 | FP32 G/F and EMA master; optional network autocast | Small optimizer/EMA updates stay FP32. H100 mode uses BF16 teacher/staged EMA forwards, disclosed as a numerical adaptation. |
-| Single/DDP, accumulation 1; explicit zero1 option | H100 mode shares optimizer states across DDP ranks using native Torch 2.6. No FSDP/LoRA/accumulation. Runtime validation is pending. |
+| Single/DDP gradient accumulation; explicit zero1 option | Loss/count mean, DDP no_sync until last microbatch, clip/step/EMA once. H100 effective batch 128; no FSDP/LoRA. Runtime validation is pending. |
 | Teacher fallback pauses after fake warmup | Fixed number alone does not prove fitting adequacy; recipient inspects diagnostics before continuing. Paired F remains the default. |
 | Nonfinite gradients are exposed | No latent clipping/thresholding/nan_to_num masking. Log AMP skips, preserve failure checkpoint, abort repeated failures. |
 | Atomic schema-2 rank-local checkpoints with opt-in retention | Latest replaces only owned completed periodic/final directories; initial assets, selected exports, `.pin` and failure/warmup states remain protected. Resume requires same prompt contents, batch, world size, Torch build and named parameter partition. |
@@ -41,9 +41,37 @@ a chosen best model. H100_RUN_PLAN.md and CONFIG_SOURCES.md specify the experime
   state directly; no multi-GB CUDA object consolidation.
 - TensorBoard uses rank-aggregated numeric diagnostics and rank-0 fixed images.
   Fixed image decoding preserves train RNG and releases VAE. JSONL remains per-rank.
-- Batch 1/GPU is an unmeasured starting point. Paper global batch 128 is not matched.
-  Keep LR fixed initially, then measure before any batch/LR changes.
+- Superseded initial batch 1/GPU/global 2 plan: see the owner-requested update below.
 - CD maximum screen 0.03/0.1/0.3 at 300 G, unchanged beta ramp; winner to 1500 G
   before judging full anchoring. Optional control beta=0/CD=0 at 1500 G. Resume
   justified winner to 5000 total G. No automated quality winner or early-stop rule.
 - Source handoff remains verbatim. No Mac tests, GPU runtime or metrics executed.
+
+## Owner LR and fair-batch update (2026-10-08)
+
+The owner explicitly chose LR 1e-6 and rejected global batch 2 as too small for
+comparison. Both G/F now use constant 1e-6 (paper reference 5e-7). H100 target is
+effective batch 128: physical 2 × 2 ranks × accumulation 32. If measured VRAM
+requires physical 1, use accumulation 64 in a new run; retain effective batch/LR.
+
+Accumulation is implemented for both F and G, not merely enabled in YAML. Every
+window keeps model weights, beta/CD and a shared anchor fixed. Loss gradients are
+averaged; unscale/clip/step/EMA/counters execute once at the window boundary.
+Nonfinite loss/gradients reject the entire window, clear its gradients and keep
+G/EMA counters unchanged. Checkpoints never save a partial gradient window.
+DDP invalid-loss backward completes reducer hooks before gradients are discarded.
+
+Short smoke/resume uses accumulation 2; a separate four-anchor batch-smoke uses
+full effective 128. Scientific stages reject effective-batch mismatch. Resume
+requires unchanged physical batch and accumulation, even if their product matches.
+Control matches 1500 G and optionally 5000 G for final comparison. Added numerical
+mean/clipping/EMA/skip tests and two-rank mean-gradient/resume tests are authored
+but unexecuted. Runtime correctness and memory fit await recipient evidence.
+
+At the owner's further request to check fair comparisons, v0.3 checkpoint JSON
+manifests include current config, topology/effective batch, prompt hash, scheduler
+and environment. A read-only comparator audits completed run budgets, declared
+research differences, initial/data/code hashes and optional paired evaluation
+protocols without loading models. Skips require data-exposure review. GPU cost is
+reported, not forced equal. This metadata audit cannot certify statistical or
+numerical validity or comparison to external paper scores. Tests remain unrun.

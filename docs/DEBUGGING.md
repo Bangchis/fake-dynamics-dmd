@@ -9,7 +9,7 @@ and actual checkpoint before changing the method.
 |---|---|
 | strict import mismatch | Full paired release, raw generator state, exact `fake_unet.` prefix, UNet config and tensor shapes. Do not use `strict=False`. |
 | no CUDA / wrong precision | Torch wheel, CUDA driver/device visibility, bf16 support, matching torchvision; doctor allocates no model. |
-| out of memory | Check actual sharding/EMA/teacher settings, peak by rank, failed operation and batch. H100 mode shards optimizer state and stages CPU EMA; G/F and DDP buckets still occupy VRAM. FSDP/accumulation need a separate implementation. |
+| out of memory | Check actual sharding/EMA/teacher settings, peak by rank, failed operation and batch. H100 mode shards optimizer state and stages CPU EMA; G/F and DDP buckets still occupy VRAM. Try a new run with physical 1/accumulation 64 to retain effective batch 128. FSDP is not implemented. |
 | fake loss suddenly lower when beta rises | Target normalization divides by 1+beta. Inspect corrected errors and held-out probes, not only raw/mixed loss. |
 | G has no gradient | Proxy y must retain graph; critic estimates and proxy target must detach. Detached teacher/fake MSE cannot update G. |
 | teacher/EMA changes unexpectedly | Frozen `requires_grad`, eval mode, correct optimizer parameter identities; EMA after successful G only. |

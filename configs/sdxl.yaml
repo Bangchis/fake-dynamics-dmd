@@ -11,8 +11,8 @@ resolution: 1024
 prediction_type: epsilon
 generator_anchors: [999, 749, 499, 249]
 teacher_cfg: 8.0
-generator_lr: 5.0e-7
-fake_lr: 5.0e-7
+generator_lr: 1.0e-6 # owner-selected; paper reference 5e-7
+fake_lr: 1.0e-6
 adam_betas: [0.9, 0.999]
 weight_decay: 0.01
 max_grad_norm: 10.0
@@ -33,6 +33,7 @@ total_generator_updates: null
 checkpoint_interval_g_updates: null
 probe_interval_g_updates: null
 gradient_accumulation_steps: 1
+target_global_batch_size: null # generic template; H100 plan asserts effective global 128
 distributed_strategy: single # single or ddp; all four UNets are replicated
 mixed_precision: bf16
 gradient_checkpointing: false

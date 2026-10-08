@@ -41,7 +41,10 @@ libraries/caches có sẵn được tái dùng qua adapter; xem EVALUATION.md.
 
 Single CUDA hoặc DDP được viết. H100 config chia AdamW state, giữ EMA master ở CPU
 và teacher BF16; G/F vẫn full-weight trên mỗi rank. **Chưa đo VRAM/throughput**.
-Không có FSDP, LoRA hay gradient accumulation. Chọn flag chưa hỗ trợ sẽ báo lỗi.
+Gradient accumulation đã được viết: loss lấy mean, clip/optimizer/EMA một lần mỗi
+batch hiệu dụng. Config 2 H100 chọn **2/GPU × 2 ranks × accumulation 32 = 128**,
+LR G/F **1e-6**. Vừa VRAM và tính đúng số học vẫn chờ bên nhận kiểm chứng.
+Không có FSDP hay LoRA. Chọn flag chưa hỗ trợ sẽ báo lỗi.
 VAE chỉ load khi decode ảnh, không nằm trong latent training loop. Không có LMDB,
 real-image train data, discriminator hay GAN objective.
 
@@ -73,7 +76,8 @@ fdmd --debug train --config configs/toy.yaml
 
 Toy chỉ kiểm tra implementation. Chuẩn bị paired weights, prompts và runtime config
 theo [RUNBOOK](docs/RUNBOOK.md) trước `scripts/smoke_gpu.sh` và run SDXL thật.
-Không dùng defaults để suy đoán tài nguyên hoặc batch 128 từ paper.
+H100 launcher giữ batch hiệu dụng 128 khi đổi physical batch; xem
+[kế hoạch H100](docs/H100_RUN_PLAN.md) để smoke/resume và đo tài nguyên.
 
 ## Nguồn và phạm vi benchmark
 

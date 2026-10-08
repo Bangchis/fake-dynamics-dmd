@@ -100,8 +100,65 @@ def distributed_worker(rank, root, port):
         MASTER_PORT=str(port),
     )
     config = replace(
-        cfg(root, "first"), distributed_strategy="ddp", optimizer_state_sharding="zero1"
+        cfg(root, "first"),
+        distributed_strategy="ddp",
+        optimizer_state_sharding="zero1",
+        gradient_accumulation_steps=2,
+        target_global_batch_size=8,
     )
+    # Compare DDP/no_sync/zero1 gradients against an independently differentiated
+    # full effective batch. Exact resume alone cannot catch a wrong gradient scale.
+    mean = Trainer(replace(config, output_dir=str(root / "mean")))
+    reference = ToyEpsilon()
+    reference.load_state_dict(unwrap(mean.backend.fake).state_dict())
+    x = torch.ones(mean.shape)
+    times = torch.full((mean.shape[0],), 999, dtype=torch.long)
+    condition = mean.backend.encode(["a", "b"])
+    coefficients = iter((1 + 4 * rank, 3 + 4 * rank))
+
+    def microbatch():
+        coefficient = next(coefficients)
+        expected_loss = reference(x, times, condition).square().mean() * coefficient / 2
+        expected_loss.backward()
+        loss = mean.backend.fake(x, times, condition).square().mean() * coefficient
+        return loss, {"loss": float(loss.detach()), "anchor": 999}
+
+    original_step = mean.optimizer_step
+
+    def checked_step(name, loss, **kwargs):
+        expected_grad = torch.cat([p.grad.flatten() for p in reference.parameters()])
+        torch.distributed.all_reduce(expected_grad)
+        expected_grad /= 2
+        actual_grad = torch.cat([p.grad.flatten() for p in mean.backend.fake.parameters()])
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-5, atol=1e-6)
+        return original_step(name, loss, **kwargs)
+
+    mean.optimizer_step = checked_step
+    assert mean.accumulated_step("fake", microbatch)[0]
+    mean.optimizer_step = original_step
+    # Only rank 0 is invalid. Exercise both an early no_sync rejection and a
+    # final synchronized rejection; a valid retry must not inherit partial grads
+    # or leave the DDP reducer waiting for hooks from the discarded window.
+    for failure_index in (0, 1):
+        before = {k: v.clone() for k, v in unwrap(mean.backend.fake).state_dict().items()}
+        updates_before = mean.state["fake_updates"]
+        coefficients = iter(
+            float("nan") if rank == 0 and index == failure_index else 1.0 for index in range(2)
+        )
+
+        def invalid_microbatch():
+            loss = mean.backend.fake(x, times, condition).square().mean() * next(coefficients)
+            return loss, {"loss": float(loss.detach()), "anchor": 999}
+
+        assert not mean.accumulated_step("fake", invalid_microbatch)[0]
+        assert mean.state["fake_updates"] == updates_before
+        for key, value in unwrap(mean.backend.fake).state_dict().items():
+            torch.testing.assert_close(value, before[key], rtol=0, atol=0)
+        assert all(p.grad is None for p in mean.backend.fake.parameters())
+        coefficients = iter((1.0, 1.0))
+        assert mean.accumulated_step("fake", invalid_microbatch)[0]
+        assert mean.state["fake_updates"] == updates_before + 1
+    mean.runtime.close()
     first = Trainer(config)
     combined = first.runtime.aggregate_metrics(
         {

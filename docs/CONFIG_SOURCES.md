@@ -12,20 +12,60 @@ provide the primary optimizer/sampler reference:
 
 | Setting | Reference | Selected config |
 |---|---|---|
-| G/F learning rate | paper + script | 5e-7, constant, fresh optimizers |
+| G/F learning rate | paper + script: 5e-7 | **1e-6**, owner-selected (2× reference); constant, fresh optimizers |
 | AdamW betas / decay | paper | (0.9, 0.999) / 0.01 |
 | Gradient clipping | script | 10 |
 | Fake updates per G | paper + script | 5 successful F : 1 successful G |
 | Teacher CFG | paper + script | 8 |
 | Generator anchors | paper + script | 999, 749, 499, 249; stochastic re-noising |
 | Resolution | script | 1024 |
-| Global batch | paper: 128 | 2 initially; hardware adaptation, accumulation 1 |
+| Global batch | paper: 128 (64 GPUs × physical 2) | **128**: physical 2 × 2 ranks × accumulation 32 |
 
-Do not scale LR mechanically with the 64-fold batch reduction. Measure fitting and
-update variance first. The published setting includes GAN supervision and real
+Physical batch 2 has not been measured on these H100s. If it does not fit, physical
+1 × 2 ranks × accumulation 64 preserves effective batch 128 and LR 1e-6. Matching
+batch alone does not establish a paper reproduction: accumulation is our adapter,
+and LR is deliberately doubled at the owner's request. The published setting includes GAN supervision and real
 images; this continuation uses prompt-only objectives. Initialization retains its
 DMD2 GAN history. The source checkpoint label 019000 is upstream outer-loop
 provenance; this repo's counter always measures actual successful G updates.
+
+### Teacher CFG and generator sampling
+
+Teacher CFG **8** is explicit in Appendix F.4 and `real_guidance_scale=8` in the
+pinned script. `fake_guidance_scale=1.0` refers to the critic's conditional output.
+It must not be mistaken for an extra guidance coefficient applied to the generator.
+The [official full-weight SDXL demo's sample method](https://github.com/tianweiy/DMD2/blob/8d8fa55633d47cfb81bbc7a892e7248f9518763f/demo/text_to_image_sdxl.py#L142-L176)
+calls G once with prompt embeddings at each of 999/749/499/249, converts epsilon
+to x0, then adds fresh noise. There is no unconditional G pass or CFG combination.
+This repo follows that sampler. The inference convention is conditional-only
+(`guidance_scale=1` in conventional CFG notation), while teacher CFG=8 is distilled
+through the training objectives. Applying ordinary SDXL external CFG afterward
+changes this trained sampler; it is not the baseline evaluation configuration.
+
+### Accumulation and comparison policy
+
+G/F parameters stay fixed throughout each optimizer window. One anchor is shared
+across ranks and all microbatches, preserving DMD2's shared-minibatch anchor rule.
+DM/CA/noise remain independently drawn per sample. Each mean microbatch loss is
+divided by accumulation; DDP averages ranks, synchronizing on the final backward.
+Unscale/clip/AdamW/EMA run once. Beta/CD schedules and F:G ratio count successful
+optimizer windows. See [PyTorch 2.6 DDP no_sync](https://github.com/pytorch/pytorch/blob/v2.6.0/torch/nn/parallel/distributed.py#L1297-L1322).
+
+Winner and beta=0/CD=0 control must use the same LR, physical/effective batch,
+initial G/F hashes, prompt order/seed, G/F update budget, resolution, sampling and
+metric protocol. Compare at 1500 G; for a claimed final-method gain at 5000 G,
+continue the control to 5000 too. Report processed samples, actual GPU-hours and
+the inherited DMD2 training separately. Extra teacher/CD calls make matched
+update budgets different from matched wall-time budgets; report both costs.
+Published DMD2/Decoupled scores remain external references until evaluation parity
+is established. Do not infer their successful-G budget from an outer-loop label.
+
+`python -m fake_dynamics.comparison RUN_A RUN_B --allow-field FIELD` audits actual
+v0.3 checkpoint JSON metadata without loading models. Declare only intended
+research knobs; it flags additional changes, incomplete/mismatched update budgets,
+initialization/data/code differences and skipped windows. Optional paired
+evaluation reports audit sample/seed/weights/reference/metric protocols as well.
+It reports GPU-hours separately and does not certify significance or paper parity.
 
 ## Decoupled DMD: schedule rationale
 

@@ -25,6 +25,13 @@ online G predicts clean y. Fake/DM/CA re-noise **y**, while CD starts from **h_t
 G uses anchors `[999,749,499,249]` and fresh stochastic re-noising. Fake DDIM is
 restricted to the auxiliary CD path; it does not replace G inference.
 
+With accumulation, the optimizer minibatch spans multiple physical microbatches.
+One anchor is shared across ranks and the full window; G/F/EMA parameters and
+beta/CD stay fixed within it. Divide each mean loss by the accumulation count,
+DDP-average ranks, then unscale/clip/step once. EMA and successful-update counters
+advance once after G success. A failed window clears all partial gradients;
+checkpoints occur only after a cleared window. H100 effective batch is 128.
+
 ## Losses
 
 Fake: `target=(noise + beta*T_CFG)/(1+beta)`; mean epsilon MSE. No min-SNR or x0
