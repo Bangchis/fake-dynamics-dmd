@@ -12,7 +12,7 @@ provide the primary optimizer/sampler reference:
 
 | Setting | Reference | Selected config |
 |---|---|---|
-| G/F learning rate | paper + script: 5e-7 | **1e-6**, owner-selected (2× reference); constant, fresh optimizers |
+| G/F learning rate | paper + script: 5e-7 | **5e-7**, matching the reference; constant, fresh optimizers |
 | AdamW betas / decay | paper | (0.9, 0.999) / 0.01 |
 | Gradient clipping | script | 10 |
 | Fake updates per G | paper + script | 5 successful F : 1 successful G |
@@ -22,9 +22,9 @@ provide the primary optimizer/sampler reference:
 | Global batch | paper: 128 (64 GPUs × physical 2) | **128**: physical 2 × 2 ranks × accumulation 32 |
 
 Physical batch 2 has not been measured on these H100s. If it does not fit, physical
-1 × 2 ranks × accumulation 64 preserves effective batch 128 and LR 1e-6. Matching
-batch alone does not establish a paper reproduction: accumulation is our adapter,
-and LR is deliberately doubled at the owner's request. The published setting includes GAN supervision and real
+1 × 2 ranks × accumulation 64 preserves effective batch 128 and LR 5e-7. Matching
+batch and LR does not establish a paper reproduction: accumulation is our adapter.
+The published setting includes GAN supervision and real
 images; this continuation uses prompt-only objectives. Initialization retains its
 DMD2 GAN history. The source checkpoint label 019000 is upstream outer-loop
 provenance; this repo's counter always measures actual successful G updates.

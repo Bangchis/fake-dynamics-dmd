@@ -20,8 +20,8 @@ class Config:
     prediction_type: str = "epsilon"
     generator_anchors: tuple[int, ...] = (999, 749, 499, 249)
     teacher_cfg: float = 8.0
-    generator_lr: float = 1e-6
-    fake_lr: float = 1e-6
+    generator_lr: float = 5e-7
+    fake_lr: float = 5e-7
     adam_betas: tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 0.01
     max_grad_norm: float = 10.0

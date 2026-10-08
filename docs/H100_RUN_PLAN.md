@@ -13,7 +13,7 @@ Nguồn cho từng thông số nằm trong [CONFIG_SOURCES.md](CONFIG_SOURCES.md
 | Hardware mode | 1 node, 2 ranks DDP; ZeroRedundancyOptimizer stage 1 |
 | Precision / memory | G/F FP32 + BF16 autocast; teacher BF16; EMA master FP32 CPU, snapshot BF16 CUDA |
 | Batch | **2/GPU × 2 ranks × accumulation 32 = effective global 128**; activation checkpointing bật |
-| LR G/F | **1e-6 / 1e-6** theo chủ repo chọn; constant; AdamW (0.9,0.999), decay 0.01, clip 10 |
+| LR G/F | **5e-7 / 5e-7** theo setting DMD2; constant; AdamW (0.9,0.999), decay 0.01, clip 10 |
 | Updates | 5 F thành công → 1 G thành công |
 | Teacher CFG | 8; sampler G không dùng external CFG |
 | Beta | 0 → max 0.05, bắt đầu k_G=100, đạt max ở 1100 |
@@ -24,8 +24,8 @@ Nguồn cho từng thông số nằm trong [CONFIG_SOURCES.md](CONFIG_SOURCES.md
 | Resume checkpoints | mỗi 500 G, chỉ giữ latest; cuối run không viết trùng periodic cùng G |
 
 Batch hiệu dụng 128 theo [DMD2 Appendix F.4](https://arxiv.org/html/2405.14867v2#A6.SS4),
-paper chạy 64 GPU với physical batch 2. LR paper là 5e-7; LR hiện tại gấp đôi theo
-yêu cầu chủ repo. Teacher CFG=8 cũng từ Appendix F.4; [demo full-weight gốc](https://github.com/tianweiy/DMD2/blob/8d8fa55633d47cfb81bbc7a892e7248f9518763f/demo/text_to_image_sdxl.py#L142-L176)
+paper chạy 64 GPU với physical batch 2. LR G/F hiện tại là 5e-7, cùng setting
+DMD2 theo yêu cầu mới nhất của chủ repo. Teacher CFG=8 cũng từ Appendix F.4; [demo full-weight gốc](https://github.com/tianweiy/DMD2/blob/8d8fa55633d47cfb81bbc7a892e7248f9518763f/demo/text_to_image_sdxl.py#L142-L176)
 chỉ gọi G một nhánh có prompt, không trộn unconditional G. CFG teacher được học
 qua distillation; không thêm external CFG vào sampler đánh giá này.
 
@@ -101,7 +101,7 @@ học. Kiểm tra `tests/test_h100_runtime.py` trước khi dùng rank-local res
 cấu hình đích chưa đo, không phải cam kết vừa VRAM. Nếu OOM, chọn
 `PER_DEVICE_BATCH_SIZE=1` và `RUN_ROOT` mới, chạy lại smoke/resume/batch-smoke.
 Launcher tự chọn accumulation 64 cho các stage khoa học, vẫn global 128 và LR
-1e-6. Có thể thử physical 4/accumulation 16 nếu đo được còn VRAM; physical batch
+5e-7. Có thể thử physical 4/accumulation 16 nếu đo được còn VRAM; physical batch
 nhân hai ranks phải chia hết 128. Chốt physical batch và accumulation rồi giữ
 nguyên cho mọi candidate/control/continuation; resume khác cấu hình bị từ chối.
 Nếu physical 1 vẫn OOM, ghi operation/peak để sửa memory backend; chưa có FSDP.
@@ -153,7 +153,7 @@ Nếu kết luận gain ở 5000 G, so winner/control cùng 5000 G và cùng eva
 Ghi cả sample/update budget và GPU-hours: beta/CD thêm teacher/EMA/F calls nên
 thời gian không bằng nhau dù cùng số update. Tách chi phí continuation khỏi chi
 phí DMD2 đã dùng để tạo checkpoint warm-start. Không gọi đây là fair reproduction
-paper chỉ vì batch 128: còn khác LR, loss/GAN, precision và initialization.
+paper chỉ vì batch 128 và LR khớp: còn khác loss/GAN, precision và initialization.
 Nếu cần tách tác dụng beta và CD sau đó, thêm từng ablation beta-only/CD-only bằng
 run mới; chưa đưa chúng vào ngân sách mặc định.
 

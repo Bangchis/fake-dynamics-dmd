@@ -43,7 +43,7 @@ Single CUDA hoặc DDP được viết. H100 config chia AdamW state, giữ EMA 
 và teacher BF16; G/F vẫn full-weight trên mỗi rank. **Chưa đo VRAM/throughput**.
 Gradient accumulation đã được viết: loss lấy mean, clip/optimizer/EMA một lần mỗi
 batch hiệu dụng. Config 2 H100 chọn **2/GPU × 2 ranks × accumulation 32 = 128**,
-LR G/F **1e-6**. Vừa VRAM và tính đúng số học vẫn chờ bên nhận kiểm chứng.
+LR G/F **5e-7** theo DMD2. Vừa VRAM và tính đúng số học vẫn chờ bên nhận kiểm chứng.
 Không có FSDP hay LoRA. Chọn flag chưa hỗ trợ sẽ báo lỗi.
 VAE chỉ load khi decode ảnh, không nằm trong latent training loop. Không có LMDB,
 real-image train data, discriminator hay GAN objective.

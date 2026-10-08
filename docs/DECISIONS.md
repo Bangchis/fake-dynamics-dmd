@@ -47,10 +47,10 @@ a chosen best model. H100_RUN_PLAN.md and CONFIG_SOURCES.md specify the experime
   justified winner to 5000 total G. No automated quality winner or early-stop rule.
 - Source handoff remains verbatim. No Mac tests, GPU runtime or metrics executed.
 
-## Owner LR and fair-batch update (2026-10-08)
+## Owner LR and fair-batch update (2026-10-08; LR superseded below)
 
 The owner explicitly chose LR 1e-6 and rejected global batch 2 as too small for
-comparison. Both G/F now use constant 1e-6 (paper reference 5e-7). H100 target is
+comparison. That revision used constant 1e-6 for G/F (paper reference 5e-7). H100 target is
 effective batch 128: physical 2 × 2 ranks × accumulation 32. If measured VRAM
 requires physical 1, use accumulation 64 in a new run; retain effective batch/LR.
 
@@ -75,3 +75,16 @@ research differences, initial/data/code hashes and optional paired evaluation
 protocols without loading models. Skips require data-exposure review. GPU cost is
 reported, not forced equal. This metadata audit cannot certify statistical or
 numerical validity or comparison to external paper scores. Tests remain unrun.
+
+## Match the reference learning rate (2026-10-08; current)
+
+The owner's latest request supersedes the earlier 1e-6 choice: use the original
+DMD2 SDXL launch setting, generator_lr=5e-7 and guidance/fake_lr=5e-7. Package
+defaults, generic SDXL config, H100 config and fixed sweep settings now agree.
+Keep constant LR, effective batch 128, AdamW settings, F:G ratio and ramps as
+documented. Candidate/control runs must use the same LR. Matching LR/batch still
+does not establish paper reproduction because loss/GAN/initialization differ.
+
+Existing runs retain their recorded LR. Strict resume rejects changing LR from
+1e-6 to 5e-7; the reference-setting experiment starts a new run from the same
+paired initialization. Only lightweight static checks were performed on the Mac.

@@ -6,7 +6,7 @@ candidates:
   cd-low: {consistency_weight_max: 0.03}
   cd-default: {consistency_weight_max: 0.1}
   cd-high: {consistency_weight_max: 0.3}
-fixed: {teacher_anchor_beta_max: 0.05, generator_ema_decay: 0.99, generator_lr: 1.0e-6, fake_lr: 1.0e-6, target_global_batch_size: 128}
+fixed: {teacher_anchor_beta_max: 0.05, generator_ema_decay: 0.99, generator_lr: 5.0e-7, fake_lr: 5.0e-7, target_global_batch_size: 128}
 confirmation_total_generator_updates: 1500
 main_total_generator_updates: 5000
 # Baseline uses the SAME adapter/sampling, beta=0 and CD=0; not official DMD2 GAN training.
