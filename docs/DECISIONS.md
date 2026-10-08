@@ -109,3 +109,28 @@ commit changes only LR and its documentation, not batch, beta/CD ramps, precisio
 optimizer placement or training budget. The comparison test's mismatched-LR case
 now derives a different value from the baseline so it remains meaningful when
 defaults change. No tests or training were executed on the author's Mac.
+
+## Short BF16 pilot on the recipient's 4-GPU backend (2026-10-09)
+
+The owner clarified that the goal is a lighter BF16 pilot with LR2e-6, not just
+changing LR in the old global128/1500G plan. The recipient reports BF16 online
+G/F with FP32 optimizer masters/moments, but their patch/new source files are
+unavailable here. No new BF16 optimizer implementation is inferred or merged.
+
+Added a recipient-only overlay and a YAML/JSON config helper preserving local
+backend fields/asset paths. It requires an existing train_weight_dtype BF16 field
+and unused config/run outputs, and never imports Torch or starts training.
+Targets: physical8 x 4 ranks x accumulation1 = global32; LR G/F2e-6; 200G; beta
+max.05/start20/ramp80; CD max.1/ramp100; F:G5; native1024/four-step G unchanged.
+Activation checkpointing is proposed for batch8; fit/throughput must be measured
+with beta/CD active and all anchors. Alternatives physical4/accum2/global32 and
+physical4/accum1/global16 are explicit distinct run modes, not silent fallbacks.
+
+This smaller batch and faster beta ramp are screening hypotheses, not paper
+settings or guaranteed speedups. Start each science run from paired init with
+fresh optimizers/counters. Preserve FP32 optimizer masters and source EMA updates
+from FP32 master G; recipient must fix the reported BF16-online EMA source first.
+Budget/control comparisons must declare actual samples, ramps/LR and GPU-hours;
+final paper comparisons still require the full audited 10K evaluation protocol.
+The legacy 2-GPU launcher/template is retained separately. No tests, model code,
+GPU smoke, training or benchmarks were executed on the author's Mac for this update.

@@ -15,6 +15,12 @@ scripts. These checks do not execute model code or the authored tests.
 The GitHub workflow is **workflow_dispatch only**. Publishing this repo does not
 automatically run the tests; the recipient may trigger it explicitly.
 
+2026-10-09 fast-pilot packaging: Ruff lint/format passed; 28 Python files parsed
+as AST, and the recipient overlay's LR/dtypes/ramps plus all three 4-GPU batch
+modes were checked statically. The config helper itself was not executed. The
+recipient's BF16-online/FP32-master backend remains local/unreviewed; no GPU fit,
+speed, save/resume or quality result is asserted for the new pilot.
+
 ## Authored tests, all pending execution
 
 | File | Intended meaningful coverage | Initial status |

@@ -1,0 +1,45 @@
+# Overlay for the recipient's existing BF16-online / FP32-master implementation.
+# NOT a standalone config for this repo's unmodified FP32-G/F backend.
+# Merge with its resolved local config using scripts/make_fast_pilot_config.py.
+# Batch8/GPU is a memory/throughput target, not a verified H100 fit.
+backend: sdxl
+fake_initialization: paired
+fake_warmup_updates: 0
+resolution: 1024
+prediction_type: epsilon
+generator_anchors: [999, 749, 499, 249]
+train_weight_dtype: bfloat16 # recipient-only field; FP32 master/moments must remain enabled
+mixed_precision: bf16
+teacher_weight_dtype: bfloat16
+ema_device: cpu # EMA arithmetic/checkpoint remains FP32, sourced from FP32 master G
+ema_forward_dtype: bfloat16
+generator_lr: 2.0e-6
+fake_lr: 2.0e-6
+adam_betas: [0.9, 0.999]
+weight_decay: 0.01
+max_grad_norm: 10.0
+fake_updates_per_generator: 5
+per_device_batch_size: 8
+gradient_accumulation_steps: 1
+target_global_batch_size: 32 # 8/GPU * 4 ranks * 1; runtime rejects other topology
+gradient_checkpointing: true # measure against batch4/accum2 without recomputation
+total_generator_updates: 200
+teacher_anchor_beta_max: 0.05
+teacher_anchor_start_g_update: 20
+teacher_anchor_ramp_g_updates: 80 # full beta from k_G=100; separate pilot hypothesis
+consistency_weight_max: 0.1
+consistency_ramp_g_updates: 100
+generator_ema_decay: 0.99
+beta_override: null
+consistency_override: null
+debug_anchor_cycle: false
+distributed_strategy: ddp
+tensorboard: true
+tensorboard_flush_seconds: 30
+performance_interval_g_updates: 10
+probe_interval_g_updates: 25
+sample_interval_g_updates: 50
+fixed_sample_count: 8
+checkpoint_interval_g_updates: 100
+checkpoint_keep_last: 1
+hardware_and_compute_budget: 'Fresh 4-H100 pilot; BF16 online with FP32 optimizer/EMA masters; 200 successful G, 1000 F; fit/speed/quality unverified'

@@ -1,5 +1,9 @@
 # Quyết định triển khai cho 2 × H100 80GB
 
+Đây là template 2-GPU cũ. Pilot nhanh hiện tại trên 4 H100 và bản BF16 local của
+bên nhận nằm trong [FAST_PILOT_4GPU.md](FAST_PILOT_4GPU.md); dùng recipe đó thay vì
+launcher 2-GPU/global128 dưới đây khi chạy pilot mới.
+
 Đây là cấu hình và quy trình bên nhận sẽ chạy. Tác giả chỉ kiểm tra tĩnh trên Mac;
 chưa có bằng chứng vừa VRAM, smoke/resume thành công hay điểm benchmark.
 Nguồn cho từng thông số nằm trong [CONFIG_SOURCES.md](CONFIG_SOURCES.md).

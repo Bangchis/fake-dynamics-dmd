@@ -11,7 +11,12 @@ GPU runs and benchmark are future recipient work, not completed actions.
 
 ## Start here
 
-The recipient now has HF access and 2 H100 80GB GPUs. Use H100_RUN_PLAN.md and
+The latest recipient audit reports 4 H100 GPUs with a local BF16-online/FP32-master
+adapter. The owner selected a short BF16 + LR2e-6 pilot; see FAST_PILOT_4GPU.md.
+That adapter has not been received/merged; the config helper targets their existing
+local backend. Do not mistake public BF16 autocast for BF16 online weight storage.
+
+The earlier 2-H100 template uses H100_RUN_PLAN.md and
 CONFIG_SOURCES.md for the chosen hardware mode, bounded CD screen, TensorBoard,
 retention and reuse of existing metric installations. These additions are code
 delivery only: the Mac no-test constraint remains in force.
@@ -24,8 +29,9 @@ delivery only: the Mac no-test constraint remains in force.
    smoke and a real save/resume check. See VERIFICATION.md for evidence to save.
 4. Evaluate initialization with the same chosen sample/metric protocol before
    continuation training. Fix benchmark comparability in EVALUATION.md.
-5. Choose batch, strategy and total G updates from measured resources. The beta
-   ramp reaches its maximum only at k_G=1100; leave a meaningful post-ramp phase.
+5. Choose batch, strategy and total G updates from measured resources. The legacy
+   beta ramp reaches its maximum at k_G=1100; the separate fast pilot reaches it
+   at k_G=100. Preserve the chosen schedule and leave a post-ramp phase.
 
 ## What is ready to review
 

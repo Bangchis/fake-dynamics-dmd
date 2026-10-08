@@ -12,6 +12,10 @@ from full COCO10K evaluation. Include all metric versions/scales, prompt-referen
 mapping, actual batch/world size, sampler/seed policy and repeatability evidence.
 If a metric is absent, state why; do not substitute the reference paper's value.
 
+For the separate recipient fast pilot (FAST_PILOT_4GPU.md), record initialization
+and G200 first, then a matched G200 control if justified. Keep its global32/16,
+LR2e-6 and beta start20/ramp80 explicit rather than copying the legacy budget.
+
 For the H100 experiment, save initialization, screen candidates at 300 G, winner
 and control at 1500 G, then both at 5000 total G for a matched final comparison.
 Record physical batch, ranks, accumulation, effective batch, actual G/F LR

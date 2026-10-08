@@ -17,7 +17,12 @@ bước kiểm tra bên dưới trên máy phù hợp trước run dài.
 Đặc tả gốc là tài liệu nguồn; những chỉ dẫn chạy GPU trong tài liệu không có nghĩa
 là tác giả đã thực hiện các run đó.
 
-**Bên nhận có 2 × H100 80GB:** dùng [config + kế hoạch chạy đã chốt](docs/H100_RUN_PLAN.md)
+**Pilot nhanh hiện tại trên 4 H100:** dùng [config BF16 + LR 2e-6 và cách tạo run mới](docs/FAST_PILOT_4GPU.md).
+Overlay dành cho bản BF16-online/FP32-master local của bên nhận; code đó chưa được
+merge vào backend public. Mục tiêu batch8/GPU/accum1/global32, 200G với ramp nhanh;
+chưa có bằng chứng vừa VRAM hoặc chất lượng. Không dùng launcher 2-GPU cho pilot này.
+
+**Template cũ cho 2 × H100 80GB:** dùng [config + kế hoạch chạy](docs/H100_RUN_PLAN.md)
 và [nguồn paper / lý do chọn thông số](docs/CONFIG_SOURCES.md). Có launcher
 smoke/resume → sweep CD 3 × 300 G tùy chọn → pilot 1500 G → main 5000 tổng G,
 TensorBoard, log từng rank và retention một latest checkpoint mỗi run. Metric

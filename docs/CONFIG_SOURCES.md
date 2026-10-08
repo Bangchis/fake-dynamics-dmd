@@ -39,6 +39,11 @@ been measured. The recipient's local 4-GPU BF16-online/FP32-master adapter has
 not been received or merged; apply both LR fields to its actual resolved config.
 The 2-GPU template's batch, ramps and budget are not changed by this LR update.
 
+The separate 4-GPU fast pilot is now specified in FAST_PILOT_4GPU.md and the
+recipient-only overlay: BF16 online with FP32 masters, global32, 200G and beta
+start20/ramp80. Smaller batch and faster ramps are screening choices, not paper
+settings; no fit, convergence or speed benefit is asserted without measurement.
+
 ### Teacher CFG and generator sampling
 
 Teacher CFG **8** is explicit in Appendix F.4 and `real_guidance_scale=8` in the
