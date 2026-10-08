@@ -1,4 +1,4 @@
-# Paper-derived optimizer/sampler; handoff hypotheses are labeled in CONFIG_SOURCES.md.
+# Paper-derived sampler/AdamW settings; owner-selected LR is labeled in CONFIG_SOURCES.md.
 # Runtime asset paths come from scripts/run_h100.sh environment variables.
 backend: sdxl
 backbone: stabilityai/stable-diffusion-xl-base-1.0
@@ -12,8 +12,8 @@ resolution: 1024
 prediction_type: epsilon
 generator_anchors: [999, 749, 499, 249]
 teacher_cfg: 8.0
-generator_lr: 5.0e-7 # DMD2 paper / pinned SDXL launch setting
-fake_lr: 5.0e-7
+generator_lr: 2.0e-6 # Owner-selected pilot LR; DMD2 reference is 5e-7
+fake_lr: 2.0e-6
 adam_betas: [0.9, 0.999]
 weight_decay: 0.01
 max_grad_norm: 10.0

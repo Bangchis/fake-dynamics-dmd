@@ -1,4 +1,4 @@
-# Config rationale and original sources (reviewed 2026-10-08)
+# Config rationale and original sources (updated 2026-10-09)
 
 The source documents inform the implementation; the owner's current request sets
 scope. `configs/h100_2x80.yaml` is an exploratory continuation experiment from
@@ -12,7 +12,7 @@ provide the primary optimizer/sampler reference:
 
 | Setting | Reference | Selected config |
 |---|---|---|
-| G/F learning rate | paper + script: 5e-7 | **5e-7**, matching the reference; constant, fresh optimizers |
+| G/F learning rate | paper + script: 5e-7 | **2e-6**, owner-selected pilot LR (4 times the reference); constant, fresh optimizers |
 | AdamW betas / decay | paper | (0.9, 0.999) / 0.01 |
 | Gradient clipping | script | 10 |
 | Fake updates per G | paper + script | 5 successful F : 1 successful G |
@@ -22,12 +22,22 @@ provide the primary optimizer/sampler reference:
 | Global batch | paper: 128 (64 GPUs × physical 2) | **128**: physical 2 × 2 ranks × accumulation 32 |
 
 Physical batch 2 has not been measured on these H100s. If it does not fit, physical
-1 × 2 ranks × accumulation 64 preserves effective batch 128 and LR 5e-7. Matching
-batch and LR does not establish a paper reproduction: accumulation is our adapter.
+1 × 2 ranks × accumulation 64 preserves effective batch 128 and selected LR 2e-6.
+The current LR differs from DMD2; matching batch alone does not establish a paper
+reproduction: accumulation is our adapter.
 The published setting includes GAN supervision and real
 images; this continuation uses prompt-only objectives. Initialization retains its
 DMD2 GAN history. The source checkpoint label 019000 is upstream outer-loop
 provenance; this repo's counter always measures actual successful G updates.
+
+On 2026-10-09 the owner selected 2e-6 for both G and F for the new pilot. This
+supersedes the prior reference-LR choice, not the paper's published value. Start
+a new run from the paired initialization with fresh optimizers; retain existing
+run manifests and use the same LR for a matched control. A larger LR changes the
+updates, not the cost of each optimizer cycle, and no convergence speedup has
+been measured. The recipient's local 4-GPU BF16-online/FP32-master adapter has
+not been received or merged; apply both LR fields to its actual resolved config.
+The 2-GPU template's batch, ramps and budget are not changed by this LR update.
 
 ### Teacher CFG and generator sampling
 

@@ -14,7 +14,8 @@ If a metric is absent, state why; do not substitute the reference paper's value.
 
 For the H100 experiment, save initialization, screen candidates at 300 G, winner
 and control at 1500 G, then both at 5000 total G for a matched final comparison.
-Record physical batch, ranks, accumulation, effective batch (128), LR (5e-7),
+Record physical batch, ranks, accumulation, effective batch, actual G/F LR
+(current owner-selected pilot: 2e-6; DMD2 reference: 5e-7),
 CD maximum, beta ramp, diagnostic failures, wall/GPU hours and init→pilot→final
 metric deltas. Screen scores do not establish full-beta effectiveness. Keep
 validation selection separate from final benchmark; see H100_RUN_PLAN.md.

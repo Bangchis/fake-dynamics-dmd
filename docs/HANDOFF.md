@@ -47,7 +47,8 @@ Full SDXL is intentionally full-weight training. The H100 mode implements native
 optimizer stage-1 sharing and a FP32 CPU EMA master with a staged BF16 CUDA target
 copy. Plain DDP still replicates all model/optimizer state; the explicit zero1 mode
 partitions AdamW state only. Gradient accumulation is implemented for G/F; H100
-target is effective batch 128 and LR 5e-7 for both optimizers. No FSDP/LoRA. H100 memory
+template target is effective batch 128 and owner-selected LR 2e-6 for both optimizers
+(DMD2 reference: 5e-7). No FSDP/LoRA. H100 memory
 fit, functional EMA forwards and local optimizer resume still require execution.
 
 ## First integration uncertainties to resolve

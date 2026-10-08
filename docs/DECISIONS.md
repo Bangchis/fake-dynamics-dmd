@@ -76,7 +76,7 @@ protocols without loading models. Skips require data-exposure review. GPU cost i
 reported, not forced equal. This metadata audit cannot certify statistical or
 numerical validity or comparison to external paper scores. Tests remain unrun.
 
-## Match the reference learning rate (2026-10-08; current)
+## Match the reference learning rate (2026-10-08; superseded below)
 
 The owner's latest request supersedes the earlier 1e-6 choice: use the original
 DMD2 SDXL launch setting, generator_lr=5e-7 and guidance/fake_lr=5e-7. Package
@@ -88,3 +88,24 @@ does not establish paper reproduction because loss/GAN/initialization differ.
 Existing runs retain their recorded LR. Strict resume rejects changing LR from
 1e-6 to 5e-7; the reference-setting experiment starts a new run from the same
 paired initialization. Only lightweight static checks were performed on the Mac.
+
+## Owner-selected pilot learning rate (2026-10-09; current)
+
+The owner now requests LR 2e-6 for the new pilot. Both generator_lr and fake_lr
+are set to 2e-6 in package defaults, SDXL/H100 templates and the fixed sweep
+settings. This is four times the original DMD2 reference LR 5e-7; retain that
+reference and the original handoff verbatim. LR is constant with fresh AdamW.
+
+The intent is stronger updates during a short continuation pilot, not faster
+execution of each cycle. No convergence, stability or benchmark improvement has
+been measured at this LR. Candidate/control must use the same declared LR.
+Existing runs keep their recorded config; the new LR starts a new run from the
+paired DMD2 initialization, not a strict resume with a changed optimizer setting.
+
+The recipient's 4-GPU BF16-online/FP32-master/offload changes remain local and
+unmerged. They must set both LR fields in the actual resolved pilot config;
+changing these upstream templates does not modify their running process. This
+commit changes only LR and its documentation, not batch, beta/CD ramps, precision,
+optimizer placement or training budget. The comparison test's mismatched-LR case
+now derives a different value from the baseline so it remains meaningful when
+defaults change. No tests or training were executed on the author's Mac.

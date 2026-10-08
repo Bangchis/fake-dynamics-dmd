@@ -68,7 +68,7 @@ def test_declared_sweep_detects_unintended_lr_change():
     a, b = manifest(), manifest()
     b["config"]["consistency_weight_max"] = 0.3
     assert not audit(a, b, ["consistency_weight_max"])["blocking_issues"]
-    b["config"]["fake_lr"] = 2e-6
+    b["config"]["fake_lr"] = 2 * a["config"]["fake_lr"]
     assert "Mismatch: config.fake_lr" in audit(a, b, ["consistency_weight_max"])["blocking_issues"]
 
 
